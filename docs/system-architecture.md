@@ -48,14 +48,14 @@ Browser
        -> middleware: request parsing, validation, authentication, authorization, error handling
        -> controllers: HTTP translation only
        -> services: booking, hall, identity, reporting, and audit use cases
-       -> repositories/models: Mongoose persistence
-       -> MongoDB
+       -> services/repositories: parameterized SQL through a PostgreSQL connection pool
+       -> PostgreSQL
 ```
 
 - The frontend owns presentation, accessible interaction, client-side input feedback, and API calls. Client checks do not replace server validation.
 - The API owns request validation, authorization, consistent response/error formats, and the public API contract.
 - Services own domain operations and policy enforcement; controllers should not contain core business rules.
-- MongoDB stores domain records. Mongoose schemas define field validation and indexes; database-level concurrency protections for booking conflicts must be designed and tested before booking implementation.
+- PostgreSQL stores relational domain records. Schema migrations, constraints, indexes, and database-level concurrency protections for booking conflicts must be designed and tested before booking implementation. API queries must use parameterized SQL.
 - Notifications and file storage should be behind replaceable service interfaces if those capabilities are approved. No provider is selected in Phase 1.
 
 ## Proposed domain boundaries
@@ -67,7 +67,7 @@ Browser
 - **Reporting and audit:** authorized aggregate reports and traceable administrative actions.
 - **System configuration:** explicitly approved operational settings, not secrets.
 
-Potential MongoDB collections include users, halls, bookings, notifications, audit logs, and system settings. A separate roles/permissions collection is not assumed; the authorization model depends on the confirmed role and permission requirements. Schema fields, retention, indexes, and relationships belong in the database design phase.
+Potential relational tables include users, halls, bookings, notifications, audit logs, and system settings. A separate roles/permissions table is not assumed; the authorization model depends on the confirmed role and permission requirements. Schema fields, retention, indexes, and relationships belong in the database design phase.
 
 ## Security and operational baseline
 
