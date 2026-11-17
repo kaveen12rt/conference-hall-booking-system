@@ -31,7 +31,7 @@ These are proposed capabilities, not implemented features. Exact workflow behavi
 
 - React and Vite browser application.
 - Node.js and Express REST API.
-- MongoDB accessed through Mongoose.
+- PostgreSQL accessed through a connection pool.
 - Docker Compose for a local development database.
 - GitHub Actions for linting, tests, and frontend build checks.
 
