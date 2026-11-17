@@ -1,70 +1,62 @@
-# conference-hall-booking-system
-A secure web-based conference hall reservation and management system for the Ministry of Digital Economy, Sri Lanka.
-
-
 # Conference Hall Booking System
 
-A web-based conference hall reservation and management
-system developed for the Ministry of Digital Economy,
-Sri Lanka.
+A planned web-based conference hall reservation and management system for the Ministry of Digital Economy, Sri Lanka.
 
-## Project Overview
+> **Project status:** Phase 1 — requirements analysis and system architecture. Application functionality has not yet been implemented. Production use, hosting, and Ministry approval are not implied.
 
-This system is designed to manage conference hall
-reservations, availability, booking requests and
-administrative operations.
+## Project goals
 
-## Key Features
+The proposed system will support conference hall discovery, booking requests, authorized review, availability management, and operational reporting. Requirements and workflows that depend on Ministry policy remain subject to confirmation.
 
-- User authentication and authorization
-- Conference hall management
-- Hall availability checking
-- Online booking requests
-- Booking approval and rejection
-- Booking history
-- Administrative dashboard
-- Reports and notifications
+## Proposed technology
 
-## Project Structure
+- **Frontend:** React, Vite, JavaScript, HTML, and CSS
+- **Backend:** Node.js, Express, and REST APIs
+- **Data store:** MongoDB with Mongoose
+- **Development and delivery:** GitHub Actions, Docker Compose, ESLint, and automated tests
 
-- frontend/ - Frontend application
-- backend/ - Backend application and APIs
-- database/ - Database schema and migrations
-- docs/ - Project documentation
-- scripts/ - Utility scripts
+Versions and dependency choices will be recorded and checked for compatibility when the implementation foundation is created.
 
-## Prerequisites
+## Repository layout
 
-See the technology-specific requirements in the
-project documentation.
+```text
+.github/       Collaboration templates and CI workflows
+backend/       Express API and backend tests
+database/      Database schema, migrations, and seed tooling
+docs/          Requirements, architecture, and operational guides
+frontend/      React application and frontend tests
+scripts/       Development and maintenance utilities
+```
 
-## Installation
+See [Project overview](docs/project-overview.md) and [System architecture](docs/system-architecture.md) for the Phase 1 baseline and unresolved decisions.
 
-1. Clone the repository.
-2. Configure environment variables using .env.example.
-3. Install frontend and backend dependencies.
-4. Configure the database.
-5. Run database migrations.
-6. Start the development servers.
+## Development status
 
-## Branch Strategy
+1. Requirements analysis and system architecture — **in progress**
+2. Repository and project configuration
+3. Database design and backend foundation
+4. Authentication and authorization
+5. Frontend design system and dashboard
+6. Hall management
+7. Booking and availability management
+8. Approval workflow and notifications
+9. Reports and audit logs
+10. Testing, security review, and optimization
+11. Deployment preparation and documentation
 
-- main: Production
-- develop: Integration
-- feature/*: New features
-- fix/*: Bug fixes
+Phases will be implemented and verified incrementally. A listed capability is a goal, not a claim that it is already available.
 
-## Security
+## Security and handling
 
-Never commit credentials, API keys, private keys
-or production database information.
+- Do not commit credentials, private keys, personal information, or production data.
+- Use synthetic data for development and tests.
+- Do not publish or deploy the system without the Ministry's authorization and approved infrastructure.
+- Do not disclose suspected vulnerabilities publicly; an approved private reporting channel must be established before production use.
 
-## Documentation
+## Collaboration
 
-See the docs/ directory.
+The intended workflow uses `main` for production-ready changes, `develop` for integration, and short-lived `feature/*`, `fix/*`, and `hotfix/*` branches. Changes should be proposed through reviewed pull requests. Branch protections and team permissions must be configured in GitHub and are not established by this source tree.
 
-## License
+## License and distribution
 
-Proprietary - Internal Government Project.
-
-Unauthorized distribution or reuse is prohibited.
+The intended project is proprietary and for authorized internal use. The applicable owner, license, and distribution terms must be confirmed before external distribution.
