@@ -1,26 +1,186 @@
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
+import bcrypt from "bcryptjs";
 import { createApp } from "../src/app/app.js";
 
-describe("API foundation", () => {
+describe("API foundation", { concurrency: false }, () => {
   let server;
   let baseUrl;
   let databaseAvailable;
   let queries;
+  let bookingReferenceHash;
+  let bookingConflict;
+  let sessionCookie;
+  let hallCreationAuditRecorded;
+  let bookingStatus;
+  let notificationsQueued;
+  const admin = {
+    id: "6bcf9b37-e6f1-455a-a564-12988a670d25",
+    username: "test_admin",
+    token_version: 0,
+  };
+  const hall = {
+    id: "6939af95-ad10-44d3-a224-7e6a5586bfd8",
+    capacity: 20,
+  };
+  const bookingId = "4e8fb3ea-1429-4e49-a3c1-523c207a91e8";
+  const adminPassword = "correct horse battery staple";
 
   before(async () => {
     databaseAvailable = false;
+    bookingConflict = false;
+    hallCreationAuditRecorded = false;
+    bookingStatus = "pending";
+    notificationsQueued = [];
     queries = [];
+    admin.password_hash = await bcrypt.hash(adminPassword, 4);
     const database = {
-      query: async (sql) => {
-        queries.push(sql);
-        if (!databaseAvailable) {
+      query: async (sql, params = []) => {
+        queries.push({ sql, params });
+        if (sql === "SELECT 1" && !databaseAvailable) {
           throw new Error("Database unavailable");
         }
-        return { rows: [{ "?column?": 1 }] };
+        if (sql === "SELECT 1") {
+          return { rows: [{ "?column?": 1 }] };
+        }
+        if (sql.includes("password_hash") && sql.includes("FROM admins")) {
+          return { rows: [{ ...admin }] };
+        }
+        if (sql.includes("token_version") && sql.includes("FROM admins")) {
+          return { rows: [admin] };
+        }
+        if (sql.includes("UPDATE admins") && sql.includes("token_version")) {
+          if (admin.token_version !== params[1]) {
+            return { rows: [] };
+          }
+          admin.token_version += 1;
+          return { rows: [{ id: admin.id }] };
+        }
+        if (sql.includes("INSERT INTO audit_logs")) {
+          return { rows: [] };
+        }
+        if (sql.includes("FROM conference_halls WHERE id = $1")) {
+          return { rows: [hall] };
+        }
+        if (sql.includes("FROM bookings b") && sql.includes("meeting_title")) {
+          return {
+            rows: [{
+              id: "4e8fb3ea-1429-4e49-a3c1-523c207a91e8",
+              hallId: hall.id,
+              hallName: "Main Hall",
+              date: "2026-12-01",
+              startTime: "09:00",
+              endTime: "10:00",
+              meetingTitle: "Planning meeting",
+              participantCount: 12,
+              contactName: "Example Contact",
+              contactEmail: "contact@example.test",
+              contactPhone: "+94112223344",
+              status: bookingStatus,
+            }],
+          };
+        }
+        if (sql.includes("status IN ('pending', 'approved')")) {
+          return {
+            rows: [{
+              date: "2026-12-01",
+              startTime: "09:00",
+              endTime: "10:00",
+              hallName: "Main Hall",
+            }],
+          };
+        }
+        if (sql.includes("SELECT 1") && sql.includes("FROM bookings")) {
+          return { rowCount: bookingConflict ? 1 : 0, rows: bookingConflict ? [{ "?column?": 1 }] : [] };
+        }
+        if (sql.includes("INSERT INTO bookings")) {
+          bookingReferenceHash = params[1];
+          return { rows: [] };
+        }
+        if (sql.includes("FROM bookings") && sql.includes("reference_hash")) {
+          if (params[0] === bookingReferenceHash) {
+            return { rows: [{ status: "pending", created_at: "2026-11-17T00:00:00.000Z" }] };
+          }
+          return { rows: [] };
+        }
+        if (sql.includes("FROM conference_halls") && sql.includes("is_active = TRUE")) {
+          return { rows: [{ ...hall, name: "Main Hall", description: "", facilities: [] }] };
+        }
+        throw new Error(`Unexpected query: ${sql}`);
       },
+      connect: async () => ({
+        query: async (sql, params = []) => {
+          if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") {
+            return { rows: [] };
+          }
+          if (sql.includes("FOR UPDATE") && sql.includes("FROM bookings")) {
+            return {
+              rows: [{
+                id: bookingId,
+                contactEmail: "contact@example.test",
+                status: bookingStatus,
+                date: "2026-12-01",
+                startTime: "09:00:00",
+              }],
+            };
+          }
+          if (sql.includes("pg_advisory_xact_lock")) {
+            return { rows: [] };
+          }
+          if (sql.includes("FROM bookings") && sql.includes("start_time < $4")) {
+            return {
+              rowCount: bookingConflict ? 1 : 0,
+              rows: bookingConflict ? [{ "?column?": 1 }] : [],
+            };
+          }
+          if (sql.includes("UPDATE bookings SET status")) {
+            bookingStatus = params[1];
+            return { rows: [] };
+          }
+          if (sql.includes("INSERT INTO bookings")) {
+            bookingReferenceHash = params[1];
+            return { rows: [{ id: bookingId }] };
+          }
+          if (sql.includes("INSERT INTO notifications")) {
+            notificationsQueued.push({ sql, params });
+            return { rows: [] };
+          }
+          if (sql.includes("UPDATE notifications")) {
+            notificationsQueued.push({ sql, params });
+            return { rows: [] };
+          }
+          if (sql.includes("UPDATE admins") && sql.includes("password_hash")) {
+            admin.password_hash = params[0];
+            admin.token_version += 1;
+            return { rows: [{ ...admin }] };
+          }
+          if (sql.includes("INSERT INTO audit_logs")) {
+            if (sql.includes("'hall.created'")) {
+              hallCreationAuditRecorded = true;
+            }
+            return { rows: [] };
+          }
+          if (sql.includes("INSERT INTO conference_halls")) {
+            return {
+              rows: [{
+                id: "72a8e17a-7fd4-4d3e-a363-c5b5e5eeae50",
+                name: params[0],
+                description: params[1],
+                capacity: params[2],
+                facilities: params[3],
+              }],
+            };
+          }
+          throw new Error(`Unexpected transaction query: ${sql}`);
+        },
+        release() {},
+      }),
     };
-    server = createApp({ database }).listen(0, "127.0.0.1");
+    server = createApp({
+      database,
+      authTokenSecret: "test-secret-with-more-than-thirty-two-bytes",
+      adminNotificationEmail: "office@example.test",
+    }).listen(0, "127.0.0.1");
     await new Promise((resolve) => server.once("listening", resolve));
     baseUrl = `http://127.0.0.1:${server.address().port}`;
   });
@@ -39,7 +199,7 @@ describe("API foundation", () => {
       status: "unavailable",
       database: "disconnected",
     });
-    assert.deepEqual(queries, ["SELECT 1"]);
+    assert.deepEqual(queries[0], { sql: "SELECT 1", params: [] });
   });
 
   it("reports ready after a successful database query", async () => {
@@ -59,6 +219,416 @@ describe("API foundation", () => {
     assert.equal(response.status, 404);
     assert.deepEqual(await response.json(), {
       error: { code: "NOT_FOUND" },
+    });
+  });
+
+  it("does not provide public registration and protects admin APIs", async () => {
+    const registration = await fetch(`${baseUrl}/api/auth/register`, {
+      method: "POST",
+    });
+    const adminEndpoint = await fetch(`${baseUrl}/api/admin/bookings`);
+    const adminCalendar = await fetch(
+      `${baseUrl}/api/admin/calendar/bookings?month=2026-12`,
+    );
+    const adminHallCreate = await fetch(`${baseUrl}/api/admin/halls`, {
+      method: "POST",
+    });
+
+    assert.equal(registration.status, 404);
+    assert.equal(adminEndpoint.status, 401);
+    assert.equal(adminCalendar.status, 401);
+    assert.equal(adminHallCreate.status, 401);
+  });
+
+  it("authenticates an admin and sets a protected session cookie", async () => {
+    const emailLogin = await fetch(`${baseUrl}/api/admin/auth/login`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        origin: "http://127.0.0.1:5173",
+      },
+      body: JSON.stringify({ email: "admin@example.test", password: adminPassword }),
+    });
+    assert.equal(emailLogin.status, 400);
+
+    const response = await fetch(`${baseUrl}/api/admin/auth/login`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        origin: "http://127.0.0.1:5173",
+      },
+      body: JSON.stringify({ username: admin.username, password: adminPassword }),
+    });
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), {
+      admin: { id: admin.id, username: admin.username },
+    });
+    const cookie = response.headers.get("set-cookie");
+    assert.match(cookie, /HttpOnly/i);
+    assert.match(cookie, /SameSite=Strict/i);
+    assert.match(cookie, /Path=\/api\/admin/i);
+
+    sessionCookie = cookie.split(";")[0];
+    const profile = await fetch(`${baseUrl}/api/admin/auth/me`, {
+      headers: { cookie: sessionCookie },
+    });
+    assert.equal(profile.status, 200);
+    assert.deepEqual(await profile.json(), {
+      admin: { id: admin.id, username: admin.username },
+    });
+
+    const calendar = await fetch(
+      `${baseUrl}/api/admin/calendar/bookings?month=2026-12`,
+      { headers: { cookie: sessionCookie } },
+    );
+    assert.equal(calendar.status, 200);
+    const calendarBody = await calendar.json();
+    assert.equal(calendarBody.bookings[0].contactEmail, "contact@example.test");
+    assert.equal(calendar.headers.get("cache-control"), "no-store");
+
+    const logout = await fetch(`${baseUrl}/api/admin/auth/logout`, {
+      method: "POST",
+      headers: {
+        cookie: sessionCookie,
+        origin: "http://127.0.0.1:5173",
+      },
+    });
+    assert.equal(logout.status, 204);
+
+    const revokedProfile = await fetch(`${baseUrl}/api/admin/auth/me`, {
+      headers: { cookie: sessionCookie },
+    });
+    assert.equal(revokedProfile.status, 401);
+  });
+
+  it("creates a hall only for authenticated same-origin admins", async () => {
+    const login = await fetch(`${baseUrl}/api/admin/auth/login`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        origin: "http://127.0.0.1:5173",
+      },
+      body: JSON.stringify({ username: admin.username, password: adminPassword }),
+    });
+    const cookie = login.headers.get("set-cookie").split(";")[0];
+    const hallBody = {
+      name: "  Main Conference Hall  ",
+      description: "Large meeting space",
+      capacity: 250,
+      facilities: [" Projector ", "Wi-Fi"],
+    };
+
+    const wrongOrigin = await fetch(`${baseUrl}/api/admin/halls`, {
+      method: "POST",
+      headers: {
+        cookie,
+        origin: "https://example.test",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(hallBody),
+    });
+    assert.equal(wrongOrigin.status, 403);
+
+    const invalid = await fetch(`${baseUrl}/api/admin/halls`, {
+      method: "POST",
+      headers: {
+        cookie,
+        origin: "http://127.0.0.1:5173",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ ...hallBody, capacity: 0 }),
+    });
+    assert.equal(invalid.status, 400);
+    assert.deepEqual(await invalid.json(), {
+      error: { code: "INVALID_HALL" },
+    });
+
+    const created = await fetch(`${baseUrl}/api/admin/halls`, {
+      method: "POST",
+      headers: {
+        cookie,
+        origin: "http://127.0.0.1:5173",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(hallBody),
+    });
+
+    assert.equal(created.status, 201);
+    assert.deepEqual((await created.json()).hall, {
+      id: "72a8e17a-7fd4-4d3e-a363-c5b5e5eeae50",
+      name: "Main Conference Hall",
+      description: "Large meeting space",
+      capacity: 250,
+      facilities: ["Projector", "Wi-Fi"],
+    });
+    assert.equal(hallCreationAuditRecorded, true);
+  });
+
+  it("changes the admin password and invalidates the previous session", async () => {
+    const login = await fetch(`${baseUrl}/api/admin/auth/login`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        origin: "http://127.0.0.1:5173",
+      },
+      body: JSON.stringify({ username: admin.username, password: adminPassword }),
+    });
+    const oldCookie = login.headers.get("set-cookie").split(";")[0];
+    const changed = await fetch(`${baseUrl}/api/admin/auth/password`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        origin: "http://127.0.0.1:5173",
+        cookie: oldCookie,
+      },
+      body: JSON.stringify({
+        currentPassword: adminPassword,
+        newPassword: "a different secure password",
+      }),
+    });
+
+    assert.equal(changed.status, 200);
+    const newCookie = changed.headers.get("set-cookie").split(";")[0];
+    assert.equal(
+      (
+        await fetch(`${baseUrl}/api/admin/auth/me`, {
+          headers: { cookie: oldCookie },
+        })
+      ).status,
+      401,
+    );
+    assert.equal(
+      (
+        await fetch(`${baseUrl}/api/admin/auth/me`, {
+          headers: { cookie: newCookie },
+        })
+      ).status,
+      200,
+    );
+  });
+
+  it("returns reserved times and hall names without exposing meeting or contact details", async () => {
+    const response = await fetch(
+      `${baseUrl}/api/availability?hallId=${hall.id}&month=2026-12`,
+    );
+
+    assert.equal(response.status, 200);
+    const result = await response.json();
+    assert.deepEqual(result, {
+      hallId: hall.id,
+      month: "2026-12",
+      slots: [{
+        date: "2026-12-01",
+        startTime: "09:00",
+        endTime: "10:00",
+        hallName: "Main Hall",
+      }],
+    });
+    assert.equal(JSON.stringify(result).includes("contactEmail"), false);
+    assert.equal(JSON.stringify(result).includes("contactName"), false);
+    assert.equal(JSON.stringify(result).includes("meetingTitle"), false);
+    const query = [...queries].reverse().find(({ sql }) =>
+      sql.includes("status IN ('pending', 'approved')"),
+    );
+    assert.deepEqual(query.params, [hall.id, "2026-12"]);
+    assert.equal(response.headers.get("cache-control"), "no-store");
+  });
+
+  it("returns public reservations across all halls when hallId is omitted", async () => {
+    const response = await fetch(`${baseUrl}/api/availability?month=2026-12`);
+
+    assert.equal(response.status, 200);
+    const result = await response.json();
+    assert.equal(result.hallId, null);
+    assert.deepEqual(result.slots, [{
+      date: "2026-12-01",
+      startTime: "09:00",
+      endTime: "10:00",
+      hallName: "Main Hall",
+    }]);
+    const query = [...queries].reverse().find(({ sql }) =>
+      sql.includes("status IN ('pending', 'approved')"),
+    );
+    assert.deepEqual(query.params, [null, "2026-12"]);
+  });
+
+  it("rejects times that do not use 15-minute increments", async () => {
+    const response = await fetch(`${baseUrl}/api/bookings`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        hallId: hall.id,
+        meetingTitle: "Planning meeting",
+        purpose: "Project planning",
+        bookingDate: "2026-12-01",
+        startTime: "09:07",
+        endTime: "10:00",
+        participantCount: 12,
+        contactName: "Example Contact",
+        contactEmail: "contact@example.test",
+        contactPhone: "+94112223344",
+      }),
+    });
+
+    assert.equal(response.status, 400);
+    assert.deepEqual(await response.json(), {
+      error: { code: "INVALID_BOOKING" },
+    });
+  });
+
+  it("prevents overlapping pending or approved bookings", async () => {
+    bookingConflict = true;
+    const response = await fetch(`${baseUrl}/api/bookings`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        hallId: hall.id,
+        meetingTitle: "Conflicting meeting",
+        purpose: "Project planning",
+        bookingDate: "2026-12-01",
+        startTime: "09:15",
+        endTime: "10:15",
+        participantCount: 12,
+        contactName: "Example Contact",
+        contactEmail: "contact@example.test",
+        contactPhone: "+94112223344",
+      }),
+    });
+    bookingConflict = false;
+
+    assert.equal(response.status, 409);
+    assert.deepEqual(await response.json(), {
+      error: { code: "BOOKING_TIME_UNAVAILABLE" },
+    });
+  });
+
+  it("rejects malformed public calendar query parameters", async () => {
+    const response = await fetch(
+      `${baseUrl}/api/availability?hallId=not-a-uuid&month=2026-13`,
+    );
+
+    assert.equal(response.status, 400);
+    assert.deepEqual(await response.json(), {
+      error: { code: "INVALID_AVAILABILITY_QUERY" },
+    });
+  });
+
+  it("creates a public booking and queues requester and admin email notifications", async () => {
+    const submission = await fetch(`${baseUrl}/api/bookings`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        hallId: hall.id,
+        meetingTitle: "Planning meeting",
+        purpose: "Project planning",
+        bookingDate: "2026-12-01",
+        startTime: "09:00",
+        endTime: "10:00",
+        participantCount: 12,
+        contactName: "Example Contact",
+        contactEmail: "contact@example.test",
+        contactPhone: "+94112223344",
+      }),
+    });
+
+    assert.equal(submission.status, 201);
+    const receipt = await submission.json();
+    assert.equal(receipt.emailStatus, "configuration_required");
+    assert.match(receipt.reference, /^[A-Za-z0-9_-]{43}$/);
+    assert.equal(receipt.status, "pending");
+    assert.notEqual(bookingReferenceHash, receipt.reference);
+
+    const status = await fetch(`${baseUrl}/api/bookings/status`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ reference: receipt.reference }),
+    });
+
+    assert.equal(status.status, 200);
+    const statusBody = await status.json();
+    assert.deepEqual(statusBody, {
+      status: "pending",
+      submittedAt: "2026-11-17T00:00:00.000Z",
+    });
+    assert.equal(JSON.stringify(statusBody).includes("contactEmail"), false);
+    assert.deepEqual(
+      notificationsQueued.map(({ params }) => params[1]),
+      [
+        "contact@example.test",
+        "office@example.test",
+      ],
+    );
+  });
+
+  it("allows an admin to approve or cancel a booking and queues status and reminder emails", async () => {
+    const login = await fetch(`${baseUrl}/api/admin/auth/login`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        origin: "http://127.0.0.1:5173",
+      },
+      body: JSON.stringify({
+        username: admin.username,
+        password: "a different secure password",
+      }),
+    });
+    const cookie = login.headers.get("set-cookie").split(";")[0];
+    notificationsQueued = [];
+
+    const approved = await fetch(
+      `${baseUrl}/api/admin/calendar/bookings/${bookingId}/status`,
+      {
+        method: "PATCH",
+        headers: {
+          cookie,
+          origin: "http://127.0.0.1:5173",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ status: "approved" }),
+      },
+    );
+    assert.equal(approved.status, 200);
+    assert.deepEqual(await approved.json(), {
+      bookingId,
+      status: "approved",
+    });
+    assert.equal(notificationsQueued[0].params[1], "booking_approved");
+    assert.equal(notificationsQueued[0].params[2], "contact@example.test");
+    assert.match(notificationsQueued[1].sql, /booking_reminder/);
+
+    notificationsQueued = [];
+    const cancelled = await fetch(
+      `${baseUrl}/api/admin/calendar/bookings/${bookingId}/status`,
+      {
+        method: "PATCH",
+        headers: {
+          cookie,
+          origin: "http://127.0.0.1:5173",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ status: "cancelled" }),
+      },
+    );
+    assert.equal(cancelled.status, 200);
+    assert.deepEqual(await cancelled.json(), {
+      bookingId,
+      status: "cancelled",
+    });
+    assert.equal(notificationsQueued[0].params[1], "booking_cancelled");
+    assert.match(notificationsQueued[1].sql, /UPDATE notifications/);
+  });
+
+  it("rejects public booking submissions with a honeypot value", async () => {
+    const response = await fetch(`${baseUrl}/api/bookings`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ website: "spam" }),
+    });
+
+    assert.equal(response.status, 400);
+    assert.deepEqual(await response.json(), {
+      error: { code: "INVALID_BOOKING" },
     });
   });
 

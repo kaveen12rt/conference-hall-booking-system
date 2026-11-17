@@ -31,6 +31,7 @@ export default [
     },
     rules: {
       "no-unused-vars": ["error", { argsIgnorePattern: "^_" }],
+      "react/prop-types": "off",
     },
   },
 ];
