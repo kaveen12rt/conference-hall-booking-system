@@ -56,6 +56,7 @@ export function createApp({
       authTokenSecret,
       frontendOrigin,
       secureCookies,
+      emailDeliveryConfigured,
     }),
   );
   app.use(

@@ -36,6 +36,7 @@ describe("email notification worker", () => {
       bookingStatus: "pending",
       meetingTitle: 'Planning <script>alert("x")</script>',
       contactName: "Example Requester",
+      contactDesignation: "Senior <Officer>",
       contactEmail: "requester@example.test",
       date: "2026-12-01",
       startTime: "09:00",
@@ -53,6 +54,7 @@ describe("email notification worker", () => {
     assert.equal(sent.length, 1);
     assert.equal(sent[0].to, "requester@example.test");
     assert.match(sent[0].text, /Main Hall/);
+    assert.match(sent[0].text, /Senior <Officer>/);
     assert.match(sent[0].subject, /^Conference Hall Booking \| /);
     assert.match(sent[0].html, /GOVERNMENT OF SRI LANKA/);
     assert.match(sent[0].html, /Booking details \/ වෙන්කිරීමේ විස්තර/);
@@ -61,6 +63,8 @@ describe("email notification worker", () => {
     assert.equal(sent[0].attachments[0].contentType, "image/png");
     assert.equal(sent[0].attachments[0].contentDisposition, "inline");
     assert.match(sent[0].html, /Planning &lt;script&gt;alert\(&quot;x&quot;\)&lt;\/script&gt;/);
+    assert.match(sent[0].html, /Senior &lt;Officer&gt;/);
+    assert.doesNotMatch(sent[0].html, /<Officer>/);
     assert.doesNotMatch(sent[0].html, /<script>/);
     const emblem = await readFile(sent[0].attachments[0].path);
     assert.deepEqual([...emblem.subarray(0, 8)], [

@@ -36,6 +36,10 @@ function validateBooking(body = {}) {
     endTime: body.endTime,
     participantCount: body.participantCount,
     contactName: boundedText(body.contactName, 160),
+    contactDesignation:
+      body.contactDesignation === undefined
+        ? ""
+        : boundedText(body.contactDesignation, 160),
     contactEmail: boundedText(body.contactEmail, 254),
     contactPhone: boundedText(body.contactPhone, 32),
     additionalRequirements:
@@ -56,6 +60,7 @@ function validateBooking(body = {}) {
     !Number.isInteger(booking.participantCount) ||
     booking.participantCount < 1 ||
     !booking.contactName ||
+    booking.contactDesignation === null ||
     !booking.contactEmail ||
     !EMAIL_PATTERN.test(booking.contactEmail) ||
     !booking.contactPhone ||
@@ -199,9 +204,9 @@ export function createPublicBookingRouter({
       const insertedBooking = await client.query(
         `INSERT INTO bookings (
            hall_id, reference_hash, meeting_title, purpose, booking_date,
-           start_time, end_time, participant_count, contact_name, contact_email,
+           start_time, end_time, participant_count, contact_name, contact_designation, contact_email,
            contact_phone, additional_requirements, manage_token_hash
-         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
          RETURNING id`,
         [
           booking.hallId,
@@ -213,6 +218,7 @@ export function createPublicBookingRouter({
           booking.endTime,
           booking.participantCount,
           booking.contactName,
+          booking.contactDesignation,
           booking.contactEmail,
           booking.contactPhone,
           booking.additionalRequirements,
@@ -293,6 +299,7 @@ export function createPublicBookingRouter({
               TO_CHAR(b.end_time, 'HH24:MI') AS "endTime",
               b.participant_count AS "participantCount",
               b.contact_name AS "contactName",
+              b.contact_designation AS "contactDesignation",
               b.contact_email AS "contactEmail",
               b.contact_phone AS "contactPhone",
               b.additional_requirements AS "additionalRequirements",
@@ -335,6 +342,7 @@ export function createPublicBookingRouter({
                 TO_CHAR(end_time, 'HH24:MI') AS "endTime",
                 participant_count AS "participantCount",
                 contact_name AS "contactName", contact_email AS "contactEmail",
+                contact_designation AS "contactDesignation",
                 contact_phone AS "contactPhone",
                 additional_requirements AS "additionalRequirements",
                 status,
@@ -362,6 +370,7 @@ export function createPublicBookingRouter({
       const booking = validateBooking({
         ...request.body,
         contactName: current.contactName,
+        contactDesignation: current.contactDesignation,
         contactEmail: current.contactEmail,
         contactPhone: current.contactPhone,
       });
@@ -416,6 +425,7 @@ export function createPublicBookingRouter({
         "startTime",
         "endTime",
         "participantCount",
+        "contactDesignation",
         "additionalRequirements",
       ].every((key) => String(booking[key]) === String(current[key]));
       let nextStatus = current.status;

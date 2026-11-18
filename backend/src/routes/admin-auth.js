@@ -48,6 +48,7 @@ export function createAdminAuthRouter({
   authTokenSecret,
   frontendOrigin,
   secureCookies,
+  emailDeliveryConfigured = false,
 }) {
   const router = express.Router();
   const key = new TextEncoder().encode(authTokenSecret);
@@ -115,7 +116,10 @@ export function createAdminAuthRouter({
       [admin.id],
     );
     await issueSession(admin, response);
-    return response.status(200).json({ admin: { id: admin.id, username: admin.username } });
+    return response.status(200).json({
+      admin: { id: admin.id, username: admin.username },
+      emailDeliveryConfigured,
+    });
   });
 
   router.post("/api/admin/auth/logout", sameOrigin, async (request, response) => {
@@ -154,7 +158,10 @@ export function createAdminAuthRouter({
   });
 
   router.get("/api/admin/auth/me", requireAdmin, (request, response) => {
-    response.json({ admin: { id: request.admin.id, username: request.admin.username } });
+    response.json({
+      admin: { id: request.admin.id, username: request.admin.username },
+      emailDeliveryConfigured,
+    });
   });
 
   router.post(

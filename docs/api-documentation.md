@@ -30,7 +30,7 @@ Returns active hall summaries only:
 
 ### `POST /api/bookings`
 
-Submits a request without requiring a public account. Required fields: `hallId`, `meetingTitle`, `purpose`, `bookingDate` (`YYYY-MM-DD`), `startTime` and `endTime` (`HH:MM`), positive integer `participantCount`, `contactName`, `contactEmail`, and `contactPhone`. `additionalRequirements` is optional. The hidden `website` honeypot must remain empty.
+Submits a request without requiring a public account. Required fields: `hallId`, `meetingTitle`, `purpose`, `bookingDate` (`YYYY-MM-DD`), `startTime` and `endTime` (`HH:MM`), positive integer `participantCount`, `contactName`, `contactEmail`, and `contactPhone`. `contactDesignation` and `additionalRequirements` are optional. The hidden `website` honeypot must remain empty.
 
 The server validates field types and bounds, date/time format and ordering, active hall and capacity. Start and end times must be on 15-minute boundaries (for example, `09:00`, `09:15`, or `09:30`), and a booking must end later on the same day. The form advances the end time if a changed start time would otherwise make the interval invalid; its latest same-day start is `23:30`. The server prevents overlapping pending/approved bookings for the same hall and date; adjacent bookings are allowed. A conflict returns `409 BOOKING_TIME_UNAVAILABLE`. Booking policy (timezone, operating hours, past dates, and lead times) remains unconfirmed and is not inferred here.
 
@@ -52,11 +52,11 @@ The receipt email also contains a separate secure management link. Its 256-bit t
 
 These endpoints require the secure management token emailed to the requester. The token is a bearer credential: do not share it. The email link carries it in the URL fragment (not sent to the web server in the page request), and the web page removes it from the address bar after loading.
 
-- `POST /api/bookings/manage` — body `{ "manageToken": "..." }`; returns the booking details and `canEdit`/`canCancel` flags with `Cache-Control: no-store`.
+- `POST /api/bookings/manage` — body `{ "manageToken": "..." }`; returns the booking details, including the saved requester designation, and `canEdit`/`canCancel` flags with `Cache-Control: no-store`.
 - `PATCH /api/bookings/manage` — body includes `manageToken` and the editable booking fields (`hallId`, `meetingTitle`, `purpose`, `bookingDate`, `startTime`, `endTime`, `participantCount`, and optional `additionalRequirements`). Contact identity details cannot be changed through this link. The server revalidates hall capacity and conflicts transactionally.
 - `POST /api/bookings/manage/cancel` — body `{ "manageToken": "..." }`.
 
-Requesters can edit pending bookings and cancel pending or approved bookings more than one hour before the meeting starts; the cancellation cutoff uses Asia/Colombo time. Editing an approved booking more than one hour before it starts returns it to `pending` for admin reapproval and notifies the authorized office inbox. Changes and cancellations queue requester emails and cancellation notices to the authorized office inbox when configured; obsolete reminders are cancelled. Rejected, completed, or cancelled bookings cannot be edited or cancelled again.
+Requesters can edit pending bookings and cancel pending or approved bookings more than one hour before the meeting starts; the cancellation cutoff uses Asia/Colombo time. Contact identity details, including designation, cannot be changed through the management link. Editing an approved booking more than one hour before it starts returns it to `pending` for admin reapproval and notifies the authorized office inbox. Changes and cancellations queue requester emails and cancellation notices to the authorized office inbox when configured; obsolete reminders are cancelled. Rejected, completed, or cancelled bookings cannot be edited or cancelled again.
 
 ### `POST /api/bookings/status`
 
@@ -97,9 +97,10 @@ Runs `SELECT 1`; returns `200` when PostgreSQL is reachable and `503` otherwise.
 
 Admin routes require the signed `admin_session` HttpOnly cookie. Login is limited to five attempts per IP per 15 minutes. Mutating admin endpoints require the configured frontend `Origin`.
 
-- `POST /api/admin/auth/login` — body `{ "username": "...", "password": "..." }`; returns the admin ID/username and sets a 30-minute `SameSite=Strict` cookie. Usernames are 3-32 letters, numbers, dots, underscores, or hyphens and are case-insensitive.
+- `POST /api/admin/auth/login` — body `{ "username": "...", "password": "..." }`; returns the admin ID/username, whether SMTP email delivery is configured, and sets a 30-minute `SameSite=Strict` cookie. Usernames are 3-32 letters, numbers, dots, underscores, or hyphens and are case-insensitive.
 - `POST /api/admin/auth/logout` — clears the cookie and revokes that admin's prior tokens.
-- `GET /api/admin/auth/me` — returns the authenticated admin ID/username.
+- `GET /api/admin/auth/me` — returns the authenticated admin ID/username and whether SMTP email delivery is configured.
+- `GET /api/admin/notifications` — returns the total number of pending requests and the 10 most recently submitted pending bookings for the admin dashboard notification menu. Response is `Cache-Control: no-store`.
 - `POST /api/admin/auth/password` — body `{ "currentPassword": "...", "newPassword": "..." }`; new passwords must be 12-72 UTF-8 bytes. Existing sessions are invalidated by incrementing the admin token version; the current session is replaced.
 - `GET /api/admin/calendar/bookings?month=YYYY-MM[&hallId=<uuid>]` — returns all booking states and booking/contact details for the selected month, optionally filtered by hall. Admin-only and `Cache-Control: no-store`.
 - `PATCH /api/admin/calendar/bookings/:bookingId/status` — body `{ "status": "approved" | "rejected" | "cancelled" | "pending" }`. Pending bookings can be approved, rejected, or cancelled; approved bookings can be cancelled; a cancelled booking can be reopened as pending. Reopening rejects past bookings and checks for time conflicts under the same booking lock. A successful reopen creates a fresh requester-management token, queues a requester email with the new link, notifies the authorized office inbox, and is recorded in the audit log. Approval queues a reminder; cancellation prevents pending reminders from being sent.

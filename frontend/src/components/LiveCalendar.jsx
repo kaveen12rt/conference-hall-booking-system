@@ -426,7 +426,11 @@ export default function LiveCalendar({
                 {isAdmin ? (
                   <div className="event-details">
                     <strong>{entry.meetingTitle}</strong>
-                    <span>{entry.hallName} · {entry.contactName} · {entry.contactEmail}</span>
+                    <span>
+                      {entry.hallName} · {entry.contactName}
+                      {entry.contactDesignation ? ` · ${entry.contactDesignation}` : ""}
+                      {" · "}{entry.contactEmail}
+                    </span>
                     <span>{entry.participantCount} participants · {entry.status}</span>
                     {(entry.status === "pending" || entry.status === "approved" || entry.status === "cancelled") && (
                       <span className="event-actions">

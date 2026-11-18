@@ -12,6 +12,7 @@ const initialForm = {
   endTime: "",
   participantCount: "",
   contactName: "",
+  contactDesignation: "",
   contactEmail: "",
   contactPhone: "",
   additionalRequirements: "",
@@ -134,6 +135,7 @@ export default function BookingPage() {
           endTime: booking.endTime,
           participantCount: String(booking.participantCount),
           contactName: booking.contactName,
+          contactDesignation: booking.contactDesignation ?? "",
           contactEmail: booking.contactEmail,
           contactPhone: booking.contactPhone,
           additionalRequirements: booking.additionalRequirements,
@@ -501,6 +503,14 @@ export default function BookingPage() {
                 value={form.contactName}
                 onChange={updateField}
                 required
+                disabled={Boolean(manageToken)}
+                maxLength={160}
+              />
+              <Field
+                label={t("Designation (optional)")}
+                name="contactDesignation"
+                value={form.contactDesignation}
+                onChange={updateField}
                 disabled={Boolean(manageToken)}
                 maxLength={160}
               />

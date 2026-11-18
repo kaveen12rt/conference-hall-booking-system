@@ -105,6 +105,9 @@ function messageFor(notification, { tokenEncryptionSecret, frontendOrigin }) {
   const detailRows = [
     ["Meeting", "රැස්වීම", notification.meetingTitle],
     ["Hall", "ශාලාව", notification.hallName],
+    ...(notification.contactDesignation
+      ? [["Requester designation", "ඉල්ලුම්කරුගේ තනතුර", notification.contactDesignation]]
+      : []),
     ["Date", "දිනය", date],
     ["Time", "වේලාව", `${time} (Sri Lanka time / ශ්‍රී ලංකා වේලාව)`],
   ];
@@ -260,6 +263,7 @@ export async function processEmailNotifications({
               b.status AS "bookingStatus",
               b.meeting_title AS "meetingTitle",
               b.contact_name AS "contactName",
+              b.contact_designation AS "contactDesignation",
               b.contact_email AS "contactEmail",
               b.booking_date::text AS date,
               TO_CHAR(b.start_time, 'HH24:MI') AS "startTime",

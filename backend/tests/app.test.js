@@ -12,6 +12,7 @@ describe("API foundation", { concurrency: false }, () => {
   let bookingReferenceHash;
   let bookingManageTokenHash;
   let bookingManageToken;
+  let bookingContactDesignation;
   let bookingManageTokenActive;
   let bookingConflict;
   let sessionCookie;
@@ -69,6 +70,23 @@ describe("API foundation", { concurrency: false }, () => {
         if (sql.includes("INSERT INTO audit_logs")) {
           return { rows: [] };
         }
+        if (sql.includes("COUNT(*) OVER()") && sql.includes("b.status = 'pending'")) {
+          return {
+            rows: [{
+              id: bookingId,
+              hallId: hall.id,
+              hallName: "Main Hall",
+              date: "2026-12-01",
+              startTime: "09:00",
+              endTime: "10:00",
+              meetingTitle: "Planning meeting",
+              contactName: "Example Contact",
+              contactDesignation: "Senior Officer",
+              submittedAt: "2026-11-18T06:00:00.000Z",
+              totalCount: "1",
+            }],
+          };
+        }
         if (sql.includes("manage_token_hash") && sql.includes("FROM bookings b")) {
           if (!bookingManageTokenActive || params[0] !== bookingManageTokenHash) {
             return { rows: [] };
@@ -83,6 +101,7 @@ describe("API foundation", { concurrency: false }, () => {
               endTime: "10:00",
               participantCount: 12,
               contactName: "Example Contact",
+              contactDesignation: bookingContactDesignation,
               contactEmail: "contact@example.test",
               contactPhone: "+94112223344",
               additionalRequirements: "",
@@ -106,6 +125,7 @@ describe("API foundation", { concurrency: false }, () => {
               meetingTitle: "Planning meeting",
               participantCount: 12,
               contactName: "Example Contact",
+              contactDesignation: "Senior Officer",
               contactEmail: "contact@example.test",
               contactPhone: "+94112223344",
               status: bookingStatus,
@@ -127,7 +147,8 @@ describe("API foundation", { concurrency: false }, () => {
         }
         if (sql.includes("INSERT INTO bookings")) {
           bookingReferenceHash = params[1];
-          bookingManageTokenHash = params[12];
+          bookingContactDesignation = params[9];
+          bookingManageTokenHash = params[13];
           return { rows: [] };
         }
         if (sql.includes("FROM bookings") && sql.includes("reference_hash")) {
@@ -161,6 +182,7 @@ describe("API foundation", { concurrency: false }, () => {
                 endTime: "10:00",
                 participantCount: 12,
                 contactName: "Example Contact",
+                contactDesignation: bookingContactDesignation,
                 contactEmail: "contact@example.test",
                 contactPhone: "+94112223344",
                 additionalRequirements: "",
@@ -174,6 +196,7 @@ describe("API foundation", { concurrency: false }, () => {
               rows: [{
                 id: bookingId,
                 hallId: hall.id,
+                contactDesignation: bookingContactDesignation,
                 contactEmail: "contact@example.test",
                 status: bookingStatus,
                 date: "2026-12-01",
@@ -221,7 +244,8 @@ describe("API foundation", { concurrency: false }, () => {
           }
           if (sql.includes("INSERT INTO bookings")) {
             bookingReferenceHash = params[1];
-            bookingManageTokenHash = params[12];
+            bookingContactDesignation = params[9];
+            bookingManageTokenHash = params[13];
             bookingManageTokenActive = true;
             return { rows: [{ id: bookingId }] };
           }
@@ -314,6 +338,7 @@ describe("API foundation", { concurrency: false }, () => {
     const adminCalendar = await fetch(
       `${baseUrl}/api/admin/calendar/bookings?month=2026-12`,
     );
+    const adminNotifications = await fetch(`${baseUrl}/api/admin/notifications`);
     const adminHallCreate = await fetch(`${baseUrl}/api/admin/halls`, {
       method: "POST",
     });
@@ -321,6 +346,7 @@ describe("API foundation", { concurrency: false }, () => {
     assert.equal(registration.status, 404);
     assert.equal(adminEndpoint.status, 401);
     assert.equal(adminCalendar.status, 401);
+    assert.equal(adminNotifications.status, 401);
     assert.equal(adminHallCreate.status, 401);
   });
 
@@ -347,6 +373,7 @@ describe("API foundation", { concurrency: false }, () => {
     assert.equal(response.status, 200);
     assert.deepEqual(await response.json(), {
       admin: { id: admin.id, username: admin.username },
+      emailDeliveryConfigured: false,
     });
     const cookie = response.headers.get("set-cookie");
     assert.match(cookie, /HttpOnly/i);
@@ -360,6 +387,28 @@ describe("API foundation", { concurrency: false }, () => {
     assert.equal(profile.status, 200);
     assert.deepEqual(await profile.json(), {
       admin: { id: admin.id, username: admin.username },
+      emailDeliveryConfigured: false,
+    });
+
+    const notifications = await fetch(`${baseUrl}/api/admin/notifications`, {
+      headers: { cookie: sessionCookie },
+    });
+    assert.equal(notifications.status, 200);
+    assert.equal(notifications.headers.get("cache-control"), "no-store");
+    assert.deepEqual(await notifications.json(), {
+      pendingCount: 1,
+      pendingBookings: [{
+        id: bookingId,
+        hallId: hall.id,
+        hallName: "Main Hall",
+        date: "2026-12-01",
+        startTime: "09:00",
+        endTime: "10:00",
+        meetingTitle: "Planning meeting",
+        contactName: "Example Contact",
+        contactDesignation: "Senior Officer",
+        submittedAt: "2026-11-18T06:00:00.000Z",
+      }],
     });
 
     const calendar = await fetch(
@@ -369,6 +418,7 @@ describe("API foundation", { concurrency: false }, () => {
     assert.equal(calendar.status, 200);
     const calendarBody = await calendar.json();
     assert.equal(calendarBody.bookings[0].contactEmail, "contact@example.test");
+    assert.equal(calendarBody.bookings[0].contactDesignation, "Senior Officer");
     assert.equal(calendar.headers.get("cache-control"), "no-store");
 
     const logout = await fetch(`${baseUrl}/api/admin/auth/logout`, {
@@ -550,6 +600,7 @@ describe("API foundation", { concurrency: false }, () => {
         endTime: "10:00",
         participantCount: 12,
         contactName: "Example Contact",
+        contactDesignation: "Senior Officer",
         contactEmail: "contact@example.test",
         contactPhone: "+94112223344",
       }),
@@ -575,6 +626,7 @@ describe("API foundation", { concurrency: false }, () => {
         endTime: "10:15",
         participantCount: 12,
         contactName: "Example Contact",
+        contactDesignation: "Senior Officer",
         contactEmail: "contact@example.test",
         contactPhone: "+94112223344",
       }),
@@ -611,6 +663,7 @@ describe("API foundation", { concurrency: false }, () => {
         endTime: "10:00",
         participantCount: 12,
         contactName: "Example Contact",
+        contactDesignation: "Senior Officer",
         contactEmail: "contact@example.test",
         contactPhone: "+94112223344",
       }),
@@ -661,6 +714,7 @@ describe("API foundation", { concurrency: false }, () => {
     assert.equal(lookup.headers.get("cache-control"), "no-store");
     const managed = await lookup.json();
     assert.equal(managed.booking.contactEmail, "contact@example.test");
+    assert.equal(managed.booking.contactDesignation, "Senior Officer");
     assert.equal(managed.canEdit, true);
     assert.equal(managed.canCancel, true);
     assert.equal(bookingManageTokenHash, queries.at(-1).params[0]);
@@ -683,6 +737,7 @@ describe("API foundation", { concurrency: false }, () => {
       endTime: "10:00",
       participantCount: 12,
       additionalRequirements: "",
+      contactDesignation: "Attempted designation change",
     };
     const edited = await fetch(`${baseUrl}/api/bookings/manage`, {
       method: "PATCH",

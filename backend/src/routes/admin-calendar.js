@@ -12,6 +12,33 @@ export function createAdminCalendarRouter({
 }) {
   const router = express.Router();
 
+  router.get("/api/admin/notifications", async (_request, response) => {
+    const result = await database.query(
+      `SELECT b.id,
+              b.hall_id AS "hallId",
+              h.name AS "hallName",
+              b.booking_date::text AS date,
+              TO_CHAR(b.start_time, 'HH24:MI') AS "startTime",
+              TO_CHAR(b.end_time, 'HH24:MI') AS "endTime",
+              b.meeting_title AS "meetingTitle",
+              b.contact_name AS "contactName",
+              b.contact_designation AS "contactDesignation",
+              b.created_at AS "submittedAt",
+              COUNT(*) OVER() AS "totalCount"
+       FROM bookings b
+       JOIN conference_halls h ON h.id = b.hall_id
+       WHERE b.status = 'pending'
+       ORDER BY b.created_at DESC
+       LIMIT 10`,
+    );
+
+    response.set("Cache-Control", "no-store");
+    return response.json({
+      pendingCount: Number(result.rows[0]?.totalCount ?? 0),
+      pendingBookings: result.rows.map(({ totalCount: _totalCount, ...booking }) => booking),
+    });
+  });
+
   router.get("/api/admin/calendar/bookings", async (request, response) => {
     const { month, hallId } = request.query;
     if (
@@ -40,6 +67,7 @@ export function createAdminCalendarRouter({
               b.meeting_title AS "meetingTitle",
               b.participant_count AS "participantCount",
               b.contact_name AS "contactName",
+              b.contact_designation AS "contactDesignation",
               b.contact_email AS "contactEmail",
               b.contact_phone AS "contactPhone",
               b.status
