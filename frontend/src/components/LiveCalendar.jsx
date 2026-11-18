@@ -255,8 +255,22 @@ export default function LiveCalendar({
   async function updateBookingStatus(entry, status) {
     if (
       entry.status === "cancelled" &&
-      status === "pending" &&
-      !window.confirm(t("Reopening this booking will send it back for admin approval. Continue?"))
+      status === "approved" &&
+      !window.confirm(t("Reopening this booking will confirm it immediately. Continue?"))
+    ) {
+      return;
+    }
+    if (
+      entry.status === "approved" &&
+      status === "cancelled" &&
+      !window.confirm(t("Are you sure you want to cancel this confirmed booking?"))
+    ) {
+      return;
+    }
+    if (
+      entry.status === "pending" &&
+      status === "rejected" &&
+      !window.confirm(t("Are you sure you want to reject this booking request?"))
     ) {
       return;
     }
@@ -453,24 +467,14 @@ export default function LiveCalendar({
                     {(entry.status === "pending" || entry.status === "approved" || entry.status === "cancelled") && (
                       <span className="event-actions">
                         {entry.status === "pending" && (
-                          <>
-                            <button
-                              className="secondary-button"
-                              type="button"
-                              onClick={() => updateBookingStatus(entry, "approved")}
-                              disabled={actionBookingId === entry.id}
-                            >
-                              {t(actionBookingId === entry.id ? "Updating booking…" : "Approve")}
-                            </button>
-                            <button
-                              className="secondary-button"
-                              type="button"
-                              onClick={() => updateBookingStatus(entry, "rejected")}
-                              disabled={actionBookingId === entry.id}
-                            >
-                              {t("Reject")}
-                            </button>
-                          </>
+                          <button
+                            className="secondary-button"
+                            type="button"
+                            onClick={() => updateBookingStatus(entry, "rejected")}
+                            disabled={actionBookingId === entry.id}
+                          >
+                            {t("Reject")}
+                          </button>
                         )}
                         {entry.status === "approved" && (
                           <button
@@ -486,10 +490,10 @@ export default function LiveCalendar({
                           <button
                             className="secondary-button"
                             type="button"
-                            onClick={() => updateBookingStatus(entry, "pending")}
+                            onClick={() => updateBookingStatus(entry, "approved")}
                             disabled={actionBookingId === entry.id}
                           >
-                            {t(actionBookingId === entry.id ? "Updating booking…" : "Reopen for approval")}
+                            {t(actionBookingId === entry.id ? "Updating booking…" : "Reopen booking")}
                           </button>
                         )}
                       </span>

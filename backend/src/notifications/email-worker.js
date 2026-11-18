@@ -26,8 +26,10 @@ function messageFor(notification, { tokenEncryptionSecret, frontendOrigin }) {
   const subjects = {
     booking_received: "Booking request received",
     new_booking_request: "New request for review",
+    new_booking_confirmed: "New booking confirmed",
     booking_updated: "Booking request updated",
     booking_updated_pending: "Changes require approval",
+    booking_changed: "Booking details updated",
     booking_change_request: "Booking changed — review required",
     requester_booking_cancelled: "Requester cancellation notice",
     booking_reopened: "Cancelled booking reopened",
@@ -42,6 +44,10 @@ function messageFor(notification, { tokenEncryptionSecret, frontendOrigin }) {
       "Your conference hall request has been received and is pending review.",
       "ඔබගේ සම්මන්ත්‍රණ ශාලා ඉල්ලීම ලැබී ඇති අතර සමාලෝචනය සඳහා යොමු කර ඇත.",
     ],
+    new_booking_confirmed: [
+      `A new conference hall booking from ${notification.contactName} (${notification.contactEmail}) has been automatically confirmed.`,
+      `${notification.contactName} (${notification.contactEmail}) විසින් කළ නව සම්මන්ත්‍රණ ශාලා වෙන්කිරීම ස්වයංක්‍රීයව තහවුරු කර ඇත.`,
+    ],
     new_booking_request: [
       `A new booking request was submitted by ${notification.contactName} (${notification.contactEmail}).`,
       `${notification.contactName} (${notification.contactEmail}) විසින් නව වෙන්කිරීමේ ඉල්ලීමක් යොමු කර ඇත.`,
@@ -54,6 +60,10 @@ function messageFor(notification, { tokenEncryptionSecret, frontendOrigin }) {
       "Your approved booking was changed and has returned to pending review. It must be approved again.",
       "ඔබගේ අනුමත වෙන්කිරීම වෙනස් කර ඇති බැවින් එය නැවත සමාලෝචනය සඳහා පොරොත්තු තත්ත්වයට පත් කර ඇත.",
     ],
+    booking_changed: [
+      `The confirmed booking from ${notification.contactName} (${notification.contactEmail}) has been updated.`,
+      `${notification.contactName} (${notification.contactEmail}) ගේ තහවුරු කළ වෙන්කිරීම යාවත්කාලීන කර ඇත.`,
+    ],
     booking_change_request: [
       `The requester ${notification.contactName} (${notification.contactEmail}) changed a booking. Review the updated request.`,
       `${notification.contactName} (${notification.contactEmail}) වෙන්කිරීමක් වෙනස් කර ඇත. යාවත්කාලීන ඉල්ලීම සමාලෝචනය කරන්න.`,
@@ -63,12 +73,12 @@ function messageFor(notification, { tokenEncryptionSecret, frontendOrigin }) {
       `${notification.contactName} (${notification.contactEmail}) විසින් වෙන්කිරීම අවලංගු කර ඇත.`,
     ],
     booking_reopened: [
-      "Your cancelled conference hall booking has been reopened as a pending request and requires admin approval.",
-      "ඔබ අවලංගු කළ සම්මන්ත්‍රණ ශාලා වෙන්කිරීම නැවත ඉල්ලීමක් ලෙස විවෘත කර ඇත. එය පරිපාලක අනුමැතියට යොමු කර ඇත.",
+      "Your cancelled conference hall booking has been reopened and confirmed.",
+      "ඔබ අවලංගු කළ සම්මන්ත්‍රණ ශාලා වෙන්කිරීම නැවත විවෘත කර තහවුරු කර ඇත.",
     ],
     booking_reopened_admin: [
-      `A cancelled booking from ${notification.contactName} (${notification.contactEmail}) has been reopened and needs review.`,
-      `${notification.contactName} (${notification.contactEmail}) විසින් අවලංගු කළ වෙන්කිරීමක් නැවත විවෘත කර ඇත. එය සමාලෝචනය කරන්න.`,
+      `A cancelled booking from ${notification.contactName} (${notification.contactEmail}) was reopened and confirmed.`,
+      `${notification.contactName} (${notification.contactEmail}) විසින් අවලංගු කළ වෙන්කිරීමක් නැවත විවෘත කර තහවුරු කර ඇත.`,
     ],
     booking_approved: [
       "Your conference hall booking has been approved.",

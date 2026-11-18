@@ -30,8 +30,8 @@ export default function AdminPage() {
   const { language, t } = usePreferences();
   const [admin, setAdmin] = useState(null);
   const [emailDeliveryConfigured, setEmailDeliveryConfigured] = useState(false);
-  const [pendingBookings, setPendingBookings] = useState([]);
-  const [pendingCount, setPendingCount] = useState(0);
+  const [recentBookings, setRecentBookings] = useState([]);
+  const [recentBookingCount, setRecentBookingCount] = useState(0);
   const [notificationError, setNotificationError] = useState("");
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [halls, setHalls] = useState([]);
@@ -76,8 +76,8 @@ export default function AdminPage() {
 
   useEffect(() => {
     if (!admin) {
-      setPendingBookings([]);
-      setPendingCount(0);
+      setRecentBookings([]);
+      setRecentBookingCount(0);
       setNotificationError("");
       setNotificationsOpen(false);
       return undefined;
@@ -90,8 +90,8 @@ export default function AdminPage() {
       try {
         const result = await apiRequest("/api/admin/notifications");
         if (active) {
-          setPendingBookings(result.pendingBookings);
-          setPendingCount(result.pendingCount);
+          setRecentBookings(result.recentBookings);
+          setRecentBookingCount(result.recentBookingCount);
           setNotificationError("");
         }
       } catch (requestError) {
@@ -226,7 +226,7 @@ export default function AdminPage() {
     }
   }
 
-  function openPendingBooking(booking) {
+  function openRecentBooking(booking) {
     setCalendarHallId(booking.hallId);
     setCalendarSelectedDate(booking.date);
     setNotificationsOpen(false);
@@ -264,7 +264,7 @@ export default function AdminPage() {
               <button
                 className="notification-button"
                 type="button"
-                aria-label={`${t("Notifications")}${pendingCount ? `, ${pendingCount} ${t("Pending booking requests")}` : ""}`}
+                aria-label={`${t("Notifications")}${recentBookingCount ? `, ${recentBookingCount} ${t("New bookings in the last 24 hours")}` : ""}`}
                 aria-expanded={notificationsOpen}
                 aria-controls="admin-notifications"
                 onClick={() => setNotificationsOpen((open) => !open)}
@@ -273,9 +273,9 @@ export default function AdminPage() {
                   <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9" />
                   <path d="M10 21h4" />
                 </svg>
-                {pendingCount > 0 && (
+                {recentBookingCount > 0 && (
                   <span className="notification-badge" aria-hidden="true">
-                    {pendingCount > 99 ? "99+" : pendingCount}
+                    {recentBookingCount > 99 ? "99+" : recentBookingCount}
                   </span>
                 )}
               </button>
@@ -288,22 +288,22 @@ export default function AdminPage() {
                   <div className="notification-popover-heading">
                     <div>
                       <h2>{t("Notifications")}</h2>
-                      <p>{t("Pending booking requests")}</p>
+                      <p>{t("New bookings in the last 24 hours")}</p>
                     </div>
-                    <span className="notification-total">{pendingCount}</span>
+                    <span className="notification-total">{recentBookingCount}</span>
                   </div>
                   {notificationError ? (
                     <p className="notification-state" role="alert">{t(notificationError)}</p>
-                  ) : pendingBookings.length === 0 ? (
-                    <p className="notification-state">{t("You’re all caught up. No pending booking requests.")}</p>
+                  ) : recentBookings.length === 0 ? (
+                    <p className="notification-state">{t("No new bookings in the last 24 hours.")}</p>
                   ) : (
                     <ul className="notification-list">
-                      {pendingBookings.map((booking) => (
+                      {recentBookings.map((booking) => (
                         <li key={booking.id}>
                           <button
                             className="notification-item"
                             type="button"
-                            onClick={() => openPendingBooking(booking)}
+                            onClick={() => openRecentBooking(booking)}
                           >
                             <span className="notification-item-indicator" aria-hidden="true" />
                             <span className="notification-item-content">
@@ -312,6 +312,7 @@ export default function AdminPage() {
                                 <span>{booking.contactDesignation}</span>
                               )}
                               <span>{booking.hallName}</span>
+                              <small>{t(booking.status)}</small>
                               <small>
                                 {formatNotificationDate(booking.date)} · {booking.startTime}–{booking.endTime}
                               </small>
@@ -321,9 +322,9 @@ export default function AdminPage() {
                       ))}
                     </ul>
                   )}
-                  {pendingCount > pendingBookings.length && (
+                  {recentBookingCount > recentBookings.length && (
                     <p className="notification-more">
-                      {t("Showing the 10 most recent requests. Review the calendar for all bookings.")}
+                      {t("Showing the 10 most recent bookings. Review the calendar for all bookings.")}
                     </p>
                   )}
                 </section>
@@ -386,8 +387,8 @@ export default function AdminPage() {
                 <>
                   <p className="notice">
                     {emailDeliveryConfigured
-                      ? t("Review pending bookings in the calendar. Approval and decision emails are queued for requesters.")
-                      : t("Review pending bookings in the calendar. Email notifications are not configured, so requesters will not receive decision emails.")}
+                      ? t("New bookings are confirmed automatically. Review the calendar to cancel a booking when necessary.")
+                      : t("New bookings are confirmed automatically. Email notifications are not configured, so requesters will not receive confirmation emails.")}
                   </p>
 
                   <section className="hall-management" aria-labelledby="hall-management-heading">

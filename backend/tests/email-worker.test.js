@@ -74,15 +74,15 @@ describe("email notification worker", () => {
     assert.match(database.updates.at(-1).sql, /delivery_status = 'sent'/);
   });
 
-  it("adds a secure requester management link to the receipt email", async () => {
+  it("adds a secure requester management link to the booking confirmation email", async () => {
     const manageToken = "A".repeat(43);
     const database = createDatabase({
       id: "notification-id",
-      event_type: "booking_received",
+      event_type: "booking_approved",
       recipient_email: "requester@example.test",
       attempts: 1,
       manage_token_encrypted: encryptManageToken(manageToken, authTokenSecret),
-      bookingStatus: "pending",
+      bookingStatus: "approved",
       meetingTitle: "Planning meeting",
       contactName: "Example Requester",
       contactEmail: "requester@example.test",
@@ -109,6 +109,35 @@ describe("email notification worker", () => {
     ));
     assert.match(sent[0].html, /Manage booking \/ වෙන්කිරීම කළමනාකරණය/);
     assert.match(database.updates.at(-1).sql, /manage_token_encrypted = NULL/);
+  });
+
+  it("sends an admin notice when a booking is automatically confirmed", async () => {
+    const database = createDatabase({
+      id: "notification-id",
+      event_type: "new_booking_confirmed",
+      recipient_email: "office@example.test",
+      attempts: 1,
+      bookingStatus: "approved",
+      meetingTitle: "Planning meeting",
+      contactName: "Example Requester",
+      contactEmail: "requester@example.test",
+      date: "2026-12-01",
+      startTime: "09:00",
+      endTime: "10:00",
+      hallName: "Main Hall",
+    });
+    const sent = [];
+    await processEmailNotifications({
+      database,
+      from: "booking@example.test",
+      transporter: { sendMail: async (message) => sent.push(message) },
+      logger: { error: assert.fail },
+    });
+
+    assert.equal(sent.length, 1);
+    assert.equal(sent[0].to, "office@example.test");
+    assert.match(sent[0].text, /automatically confirmed/i);
+    assert.match(sent[0].html, /automatically confirmed/i);
   });
 
   it("retries temporary SMTP failures and records the error", async () => {

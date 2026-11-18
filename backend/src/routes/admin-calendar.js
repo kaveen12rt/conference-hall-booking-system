@@ -58,19 +58,21 @@ export function createAdminCalendarRouter({
               b.meeting_title AS "meetingTitle",
               b.contact_name AS "contactName",
               b.contact_designation AS "contactDesignation",
+              b.status,
               b.created_at AS "submittedAt",
               COUNT(*) OVER() AS "totalCount"
        FROM bookings b
        JOIN conference_halls h ON h.id = b.hall_id
-       WHERE b.status = 'pending'
+       WHERE b.created_at >= NOW() - INTERVAL '24 hours'
+         AND b.status IN ('approved', 'cancelled', 'rejected')
        ORDER BY b.created_at DESC
        LIMIT 10`,
     );
 
     response.set("Cache-Control", "no-store");
     return response.json({
-      pendingCount: Number(result.rows[0]?.totalCount ?? 0),
-      pendingBookings: result.rows.map(({ totalCount: _totalCount, ...booking }) => booking),
+      recentBookingCount: Number(result.rows[0]?.totalCount ?? 0),
+      recentBookings: result.rows.map(({ totalCount: _totalCount, ...booking }) => booking),
     });
   });
 
@@ -132,7 +134,7 @@ export function createAdminCalendarRouter({
       return response.status(400).json({ error: { code: "INVALID_BOOKING_ID" } });
     }
     const nextStatus = request.body?.status;
-    if (!["approved", "rejected", "cancelled", "pending"].includes(nextStatus)) {
+    if (!["approved", "rejected", "cancelled"].includes(nextStatus)) {
       return response.status(400).json({ error: { code: "INVALID_BOOKING_STATUS" } });
     }
 
@@ -155,15 +157,15 @@ export function createAdminCalendarRouter({
       }
       const allowedTransition =
         (booking.status === "pending" &&
-          ["approved", "rejected", "cancelled"].includes(nextStatus)) ||
+          ["rejected", "cancelled"].includes(nextStatus)) ||
         (booking.status === "approved" && nextStatus === "cancelled") ||
-        (booking.status === "cancelled" && nextStatus === "pending");
+        (booking.status === "cancelled" && nextStatus === "approved");
       if (!allowedTransition) {
         await client.query("ROLLBACK");
         return response.status(409).json({ error: { code: "BOOKING_STATUS_CONFLICT" } });
       }
 
-      if (booking.status === "cancelled" && nextStatus === "pending") {
+      if (booking.status === "cancelled" && nextStatus === "approved") {
         const stillUpcoming = await client.query(
           `SELECT ($1::date + $2::time) > (NOW() AT TIME ZONE 'Asia/Colombo') AS upcoming`,
           [booking.date, booking.startTime],
@@ -195,13 +197,13 @@ export function createAdminCalendarRouter({
         }
       }
 
-      const restoredManageToken = nextStatus === "pending" && booking.status === "cancelled"
+      const restoredManageToken = nextStatus === "approved" && booking.status === "cancelled"
         ? randomBytes(32).toString("base64url")
         : null;
       await client.query(
         `UPDATE bookings
          SET status = $2,
-             manage_token_hash = CASE WHEN $2 = 'pending' THEN $3
+             manage_token_hash = CASE WHEN $3 IS NOT NULL THEN $3
                                       WHEN $2 IN ('rejected', 'cancelled') THEN NULL
                                       ELSE manage_token_hash END,
              updated_at = NOW()
@@ -215,8 +217,11 @@ export function createAdminCalendarRouter({
       if (nextStatus === "rejected" || nextStatus === "cancelled") {
         await client.query(
           `UPDATE notifications
-           SET manage_token_encrypted = NULL
-           WHERE booking_id = $1 AND event_type = 'booking_received'
+           SET delivery_status = 'failed', claimed_at = NULL,
+               manage_token_encrypted = NULL,
+               last_error = 'Booking is no longer confirmed'
+           WHERE booking_id = $1
+             AND event_type IN ('booking_received', 'booking_approved', 'new_booking_confirmed')
              AND delivery_status IN ('pending', 'sending')`,
           [booking.id],
         );
@@ -228,14 +233,14 @@ export function createAdminCalendarRouter({
          ) VALUES ($1, $2, 'email', $3, NOW(), $4)`,
         [
           booking.id,
-          booking.status === "cancelled" && nextStatus === "pending"
+          booking.status === "cancelled" && nextStatus === "approved"
             ? "booking_reopened"
             : `booking_${nextStatus}`,
           booking.contactEmail,
           restoredManageToken ? encryptManageToken(restoredManageToken, authTokenSecret) : null,
         ],
       );
-      if (booking.status === "cancelled" && nextStatus === "pending" && adminNotificationEmail) {
+      if (booking.status === "cancelled" && nextStatus === "approved" && adminNotificationEmail) {
         await client.query(
           `INSERT INTO notifications (
              booking_id, event_type, channel, recipient_email, scheduled_at

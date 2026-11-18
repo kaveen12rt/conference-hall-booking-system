@@ -268,9 +268,7 @@ export default function BookingPage() {
         setManagementMessage(
           !result.changed
             ? t("No changes were made.")
-            : bookingStatus === "approved"
-              ? t("Your changes were submitted for approval. The booking is pending again.")
-              : t("Your booking request was updated."),
+            : t("Your booking was updated and remains confirmed."),
         );
         setManagementCanEdit(result.status === "pending" || result.status === "approved");
         setManagementCanCancel(result.status === "pending" || result.status === "approved");
@@ -319,7 +317,7 @@ export default function BookingPage() {
             <p className="eyebrow">{t("Ministry of Digital Economy · Sri Lanka")}</p>
             <h1>{t("Conference hall reservations")}</h1>
             <p>
-              {t("Check the public schedule and submit a reservation request online. No account is needed.")}
+              {t("Check availability and book a conference hall online. Your booking is confirmed immediately.")}
             </p>
           </div>
           <div className="intro-aside" aria-label={t("Online service information")}>
@@ -334,12 +332,12 @@ export default function BookingPage() {
               <div>
                 <p className="eyebrow">{t("Reservation details")}</p>
                 <h2 id="booking-heading">
-                  {manageToken ? t("Manage your booking") : t("Submit a booking request")}
+                  {manageToken ? t("Manage your booking") : t("Book a conference hall")}
                 </h2>
                 <p>
                   {manageToken
                     ? t("Update your request or cancel it. Contact details cannot be changed here.")
-                    : t("Complete the required fields to send your request for review.")}
+                    : t("Complete the required fields. The booking is confirmed as soon as it is submitted.")}
                 </p>
               </div>
             </div>
@@ -483,7 +481,7 @@ export default function BookingPage() {
                     end: overlappingSlot.endTime,
                   })
                   : selectedTimeIsAvailable
-                    ? t("No pending or approved reservation overlaps this time. The server checks again when you submit.")
+                    ? t("No reservation overlaps this time. The server checks again when you submit.")
                     : t("Times use 15-minute increments. Changing the start time moves the end forward when needed; choose a hall and date to check listed reservations.")}
               </p>
               <Field
@@ -570,8 +568,8 @@ export default function BookingPage() {
               )}
               {receipt && (
                 <div className="notice success full-width" role="status">
-                  <strong>{t("Request submitted.")}</strong>
-                  <span>{t("Your request is now visible on the public schedule. Personal details remain private.")}</span>
+                  <strong>{t("Booking confirmed.")}</strong>
+                  <span>{t("Your booking is confirmed and now visible on the public schedule. Personal details remain private.")}</span>
                   <span>
                     {receipt === "queued"
                       ? t("A confirmation email with your secure edit and cancellation link has been queued.")
@@ -586,7 +584,7 @@ export default function BookingPage() {
                       ? t("Submitting…")
                       : manageToken
                         ? t("Save booking changes")
-                        : t("Submit booking request")}
+                        : t("Confirm booking")}
                   </button>
                 )}
                 {manageToken && managementCanCancel && (

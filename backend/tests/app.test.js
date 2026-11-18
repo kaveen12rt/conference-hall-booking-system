@@ -18,6 +18,7 @@ describe("API foundation", { concurrency: false }, () => {
   let sessionCookie;
   let hallCreationAuditRecorded;
   let bookingStatus;
+  let bookingInsertSql;
   let bookingConflictQuery;
   let bookingMoreThanHourRemaining;
   let bookingUpcoming;
@@ -40,6 +41,7 @@ describe("API foundation", { concurrency: false }, () => {
     bookingConflict = false;
     hallCreationAuditRecorded = false;
     bookingStatus = "pending";
+    bookingInsertSql = "";
     bookingConflictQuery = "";
     bookingMoreThanHourRemaining = true;
     bookingUpcoming = true;
@@ -94,7 +96,10 @@ describe("API foundation", { concurrency: false }, () => {
             ],
           };
         }
-        if (sql.includes("COUNT(*) OVER()") && sql.includes("b.status = 'pending'")) {
+        if (
+          sql.includes("COUNT(*) OVER()") &&
+          sql.includes("NOW() - INTERVAL '24 hours'")
+        ) {
           return {
             rows: [{
               id: bookingId,
@@ -106,6 +111,7 @@ describe("API foundation", { concurrency: false }, () => {
               meetingTitle: "Planning meeting",
               contactName: "Example Contact",
               contactDesignation: "Senior Officer",
+              status: "approved",
               submittedAt: "2026-11-18T06:00:00.000Z",
               totalCount: "1",
             }],
@@ -171,6 +177,7 @@ describe("API foundation", { concurrency: false }, () => {
           return { rowCount: bookingConflict ? 1 : 0, rows: bookingConflict ? [{ "?column?": 1 }] : [] };
         }
         if (sql.includes("INSERT INTO bookings")) {
+          bookingInsertSql = sql;
           bookingReferenceHash = params[1];
           bookingContactDesignation = params[9];
           bookingManageTokenHash = params[13];
@@ -178,7 +185,7 @@ describe("API foundation", { concurrency: false }, () => {
         }
         if (sql.includes("FROM bookings") && sql.includes("reference_hash")) {
           if (params[0] === bookingReferenceHash) {
-            return { rows: [{ status: "pending", created_at: "2026-11-17T00:00:00.000Z" }] };
+            return { rows: [{ status: bookingStatus, created_at: "2026-11-17T00:00:00.000Z" }] };
           }
           return { rows: [] };
         }
@@ -264,17 +271,19 @@ describe("API foundation", { concurrency: false }, () => {
             bookingStatus = params[1];
             if (params[1] === "cancelled" || params[1] === "rejected") {
               bookingManageTokenActive = false;
-            } else if (params[1] === "pending") {
+            } else if (params[1] === "approved") {
               bookingManageTokenHash = params[2];
               bookingManageTokenActive = true;
             }
             return { rows: [] };
           }
           if (sql.includes("INSERT INTO bookings")) {
+            bookingInsertSql = sql;
             bookingReferenceHash = params[1];
             bookingContactDesignation = params[9];
             bookingManageTokenHash = params[13];
             bookingManageTokenActive = true;
+            bookingStatus = "approved";
             return { rows: [{ id: bookingId }] };
           }
           if (sql.includes("INSERT INTO notifications")) {
@@ -428,8 +437,8 @@ describe("API foundation", { concurrency: false }, () => {
     assert.equal(notifications.status, 200);
     assert.equal(notifications.headers.get("cache-control"), "no-store");
     assert.deepEqual(await notifications.json(), {
-      pendingCount: 1,
-      pendingBookings: [{
+      recentBookingCount: 1,
+      recentBookings: [{
         id: bookingId,
         hallId: hall.id,
         hallName: "Main Hall",
@@ -439,6 +448,7 @@ describe("API foundation", { concurrency: false }, () => {
         meetingTitle: "Planning meeting",
         contactName: "Example Contact",
         contactDesignation: "Senior Officer",
+        status: "approved",
         submittedAt: "2026-11-18T06:00:00.000Z",
       }],
     });
@@ -470,6 +480,12 @@ describe("API foundation", { concurrency: false }, () => {
         },
       ],
     });
+    const recentBookingsQuery = queries.find(({ sql }) =>
+      sql.includes("COUNT(*) OVER()") &&
+      sql.includes("NOW() - INTERVAL '24 hours'"),
+    );
+    assert.ok(recentBookingsQuery);
+    assert.match(recentBookingsQuery.sql, /b\.status IN \('approved', 'cancelled', 'rejected'\)/);
     const invalidReport = await fetch(
       `${baseUrl}/api/admin/reports/monthly?month=2026-13`,
       { headers: { cookie: sessionCookie } },
@@ -734,7 +750,7 @@ describe("API foundation", { concurrency: false }, () => {
     });
   });
 
-  it("creates a public booking and queues requester and admin email notifications", async () => {
+  it("confirms a public booking immediately and queues requester and admin emails", async () => {
     const submission = await fetch(`${baseUrl}/api/bookings`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -757,8 +773,10 @@ describe("API foundation", { concurrency: false }, () => {
     const receipt = await submission.json();
     assert.equal(receipt.emailStatus, "configuration_required");
     assert.match(receipt.reference, /^[A-Za-z0-9_-]{43}$/);
-    assert.equal(receipt.status, "pending");
+    assert.equal(receipt.status, "approved");
+    assert.match(bookingInsertSql, /'approved'/);
     assert.notEqual(bookingReferenceHash, receipt.reference);
+    assert.equal(notificationsQueued.length, 3, JSON.stringify(notificationsQueued));
     bookingManageToken = decryptManageToken(
       notificationsQueued[0].params[2],
       authTokenSecret,
@@ -775,17 +793,17 @@ describe("API foundation", { concurrency: false }, () => {
     assert.equal(status.status, 200);
     const statusBody = await status.json();
     assert.deepEqual(statusBody, {
-      status: "pending",
+      status: "approved",
       submittedAt: "2026-11-17T00:00:00.000Z",
     });
     assert.equal(JSON.stringify(statusBody).includes("contactEmail"), false);
-    assert.deepEqual(
-      notificationsQueued.map(({ params }) => params[1]),
-      [
-        "contact@example.test",
-        "office@example.test",
-      ],
-    );
+    assert.deepEqual(notificationsQueued.slice(0, 2).map(({ params }) => params[1]), [
+      "contact@example.test",
+      "office@example.test",
+    ]);
+    assert.match(notificationsQueued[0].sql, /'booking_approved'/);
+    assert.match(notificationsQueued[1].sql, /'new_booking_confirmed'/);
+    assert.match(notificationsQueued[2].sql, /'booking_reminder'/);
   });
 
   it("allows requesters to securely inspect, edit, and cancel their booking", async () => {
@@ -829,11 +847,13 @@ describe("API foundation", { concurrency: false }, () => {
       body: JSON.stringify(changeBody),
     });
     assert.equal(edited.status, 200);
-    assert.deepEqual(await edited.json(), { status: "pending", changed: true });
-    assert.equal(bookingStatus, "pending");
-    assert.equal(notificationsQueued.length, 2);
-    assert.equal(notificationsQueued[0].params[1], "booking_updated");
-    assert.match(notificationsQueued[1].sql, /booking_change_request/);
+    assert.deepEqual(await edited.json(), { status: "approved", changed: true });
+    assert.equal(bookingStatus, "approved");
+    assert.equal(notificationsQueued.length, 4);
+    assert.match(notificationsQueued[0].sql, /UPDATE notifications/);
+    assert.equal(notificationsQueued[1].params[1], "booking_updated");
+    assert.match(notificationsQueued[2].sql, /booking_changed/);
+    assert.match(notificationsQueued[3].sql, /booking_reminder/);
 
     bookingStatus = "approved";
     const approvedEdit = await fetch(`${baseUrl}/api/bookings/manage`, {
@@ -842,7 +862,7 @@ describe("API foundation", { concurrency: false }, () => {
       body: JSON.stringify({ ...changeBody, meetingTitle: "Another planning meeting" }),
     });
     assert.equal(approvedEdit.status, 200);
-    assert.deepEqual(await approvedEdit.json(), { status: "pending", changed: true });
+    assert.deepEqual(await approvedEdit.json(), { status: "approved", changed: true });
 
     bookingStatus = "approved";
     bookingMoreThanHourRemaining = false;
@@ -862,7 +882,7 @@ describe("API foundation", { concurrency: false }, () => {
     });
     assert.equal(tooLateCancel.status, 409);
 
-    bookingStatus = "pending";
+    bookingStatus = "approved";
     bookingMoreThanHourRemaining = false;
     const pendingTooLateCancel = await fetch(`${baseUrl}/api/bookings/manage/cancel`, {
       method: "POST",
@@ -889,11 +909,11 @@ describe("API foundation", { concurrency: false }, () => {
       body: JSON.stringify({ manageToken: bookingManageToken }),
     });
     assert.equal(revokedLink.status, 404);
-    bookingStatus = "pending";
+    bookingStatus = "approved";
     notificationsQueued = [];
   });
 
-  it("allows an admin to approve or cancel a booking and queues status and reminder emails", async () => {
+  it("does not allow admin approval and allows cancelling or reopening confirmed bookings", async () => {
     const login = await fetch(`${baseUrl}/api/admin/auth/login`, {
       method: "POST",
       headers: {
@@ -908,7 +928,8 @@ describe("API foundation", { concurrency: false }, () => {
     const cookie = login.headers.get("set-cookie").split(";")[0];
     notificationsQueued = [];
 
-    const approved = await fetch(
+    bookingStatus = "pending";
+    const approvalAttempt = await fetch(
       `${baseUrl}/api/admin/calendar/bookings/${bookingId}/status`,
       {
         method: "PATCH",
@@ -920,16 +941,33 @@ describe("API foundation", { concurrency: false }, () => {
         body: JSON.stringify({ status: "approved" }),
       },
     );
-    assert.equal(approved.status, 200);
-    assert.deepEqual(await approved.json(), {
-      bookingId,
-      status: "approved",
+    assert.equal(approvalAttempt.status, 409);
+    assert.deepEqual(await approvalAttempt.json(), {
+      error: { code: "BOOKING_STATUS_CONFLICT" },
     });
-    assert.equal(notificationsQueued[0].params[1], "booking_approved");
-    assert.equal(notificationsQueued[0].params[2], "contact@example.test");
-    assert.match(notificationsQueued[1].sql, /booking_reminder/);
 
     notificationsQueued = [];
+    const rejected = await fetch(
+      `${baseUrl}/api/admin/calendar/bookings/${bookingId}/status`,
+      {
+        method: "PATCH",
+        headers: {
+          cookie,
+          origin: "http://127.0.0.1:5173",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ status: "rejected" }),
+      },
+    );
+    assert.equal(rejected.status, 200);
+    assert.deepEqual(await rejected.json(), { bookingId, status: "rejected" });
+    const rejectionNotification = notificationsQueued.find(({ params }) =>
+      params[1] === "booking_rejected",
+    );
+    assert.ok(rejectionNotification);
+
+    notificationsQueued = [];
+    bookingStatus = "approved";
     const cancelled = await fetch(
       `${baseUrl}/api/admin/calendar/bookings/${bookingId}/status`,
       {
@@ -964,7 +1002,7 @@ describe("API foundation", { concurrency: false }, () => {
           origin: "http://127.0.0.1:5173",
           "content-type": "application/json",
         },
-        body: JSON.stringify({ status: "pending" }),
+        body: JSON.stringify({ status: "approved" }),
       },
     );
     assert.equal(conflictingReopen.status, 409);
@@ -983,7 +1021,7 @@ describe("API foundation", { concurrency: false }, () => {
           origin: "http://127.0.0.1:5173",
           "content-type": "application/json",
         },
-        body: JSON.stringify({ status: "pending" }),
+        body: JSON.stringify({ status: "approved" }),
       },
     );
     assert.equal(pastReopen.status, 409);
@@ -1001,15 +1039,15 @@ describe("API foundation", { concurrency: false }, () => {
           origin: "http://127.0.0.1:5173",
           "content-type": "application/json",
         },
-        body: JSON.stringify({ status: "pending" }),
+        body: JSON.stringify({ status: "approved" }),
       },
     );
     assert.equal(reopened.status, 200);
     assert.deepEqual(await reopened.json(), {
       bookingId,
-      status: "pending",
+      status: "approved",
     });
-    assert.equal(bookingStatus, "pending");
+    assert.equal(bookingStatus, "approved");
     assert.equal(bookingManageTokenActive, true);
     assert.equal(notificationsQueued[0].params[1], "booking_reopened");
     assert.ok(notificationsQueued[0].params[3]);

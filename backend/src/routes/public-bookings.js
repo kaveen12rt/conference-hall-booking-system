@@ -212,8 +212,8 @@ export function createPublicBookingRouter({
         `INSERT INTO bookings (
            hall_id, reference_hash, meeting_title, purpose, booking_date,
            start_time, end_time, participant_count, contact_name, contact_designation, contact_email,
-           contact_phone, additional_requirements, manage_token_hash
-         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+             contact_phone, additional_requirements, manage_token_hash, status
+           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, 'approved')
          RETURNING id`,
         [
           booking.hallId,
@@ -237,17 +237,32 @@ export function createPublicBookingRouter({
         `INSERT INTO notifications (
            booking_id, event_type, channel, recipient_email, scheduled_at,
            manage_token_encrypted
-         ) VALUES ($1, 'booking_received', 'email', $2, NOW(), $3)`,
+        ) VALUES ($1, 'booking_approved', 'email', $2, NOW(), $3)`,
         [bookingId, booking.contactEmail, encryptedManageToken],
       );
       if (adminNotificationEmail) {
         await client.query(
           `INSERT INTO notifications (
              booking_id, event_type, channel, recipient_email, scheduled_at
-           ) VALUES ($1, 'new_booking_request', 'email', $2, NOW())`,
+          ) VALUES ($1, 'new_booking_confirmed', 'email', $2, NOW())`,
           [bookingId, adminNotificationEmail],
         );
       }
+      await client.query(
+        `INSERT INTO notifications (
+          booking_id, event_type, channel, recipient_email, scheduled_at
+        )
+        SELECT id, 'booking_reminder', 'email', contact_email,
+               GREATEST(
+                 (booking_date + start_time) AT TIME ZONE 'Asia/Colombo'
+                   - INTERVAL '1 hour',
+                 NOW()
+               )
+        FROM bookings
+        WHERE id = $1
+          AND (booking_date + start_time) > (NOW() AT TIME ZONE 'Asia/Colombo')`,
+        [bookingId],
+      );
       await client.query("COMMIT");
     } catch (error) {
       await client.query("ROLLBACK");
@@ -258,7 +273,7 @@ export function createPublicBookingRouter({
 
     return response.status(201).json({
       reference,
-      status: "pending",
+      status: "approved",
       statusEndpoint: "/api/bookings/status",
       emailStatus: emailDeliveryConfigured
         ? "queued"
@@ -438,7 +453,7 @@ export function createPublicBookingRouter({
       ].every((key) => String(booking[key]) === String(current[key]));
       let nextStatus = current.status;
       if (!isUnchanged) {
-        nextStatus = current.status === "approved" ? "pending" : current.status;
+        nextStatus = "approved";
         await client.query(
           `UPDATE bookings
            SET hall_id = $2, meeting_title = $3, purpose = $4, booking_date = $5,
@@ -462,7 +477,7 @@ export function createPublicBookingRouter({
           await client.query(
             `UPDATE notifications
              SET delivery_status = 'failed', claimed_at = NULL,
-                 last_error = 'Booking changed and requires reapproval'
+                 last_error = 'Booking details changed'
              WHERE booking_id = $1 AND event_type = 'booking_reminder'
                AND delivery_status IN ('pending', 'sending')`,
             [current.id],
@@ -474,9 +489,7 @@ export function createPublicBookingRouter({
            ) VALUES ($1, $2, 'email', $3, NOW())`,
           [
             current.id,
-            nextStatus === "pending" && current.status === "approved"
-              ? "booking_updated_pending"
-              : "booking_updated",
+            "booking_updated",
             current.contactEmail,
           ],
         );
@@ -484,10 +497,25 @@ export function createPublicBookingRouter({
           await client.query(
             `INSERT INTO notifications (
                booking_id, event_type, channel, recipient_email, scheduled_at
-             ) VALUES ($1, 'booking_change_request', 'email', $2, NOW())`,
+             ) VALUES ($1, 'booking_changed', 'email', $2, NOW())`,
             [current.id, adminNotificationEmail],
           );
         }
+        await client.query(
+          `INSERT INTO notifications (
+             booking_id, event_type, channel, recipient_email, scheduled_at
+           )
+           SELECT id, 'booking_reminder', 'email', contact_email,
+                  GREATEST(
+                    (booking_date + start_time) AT TIME ZONE 'Asia/Colombo'
+                      - INTERVAL '1 hour',
+                    NOW()
+                  )
+           FROM bookings
+           WHERE id = $1
+             AND (booking_date + start_time) > (NOW() AT TIME ZONE 'Asia/Colombo')`,
+          [current.id],
+        );
       }
       await client.query("COMMIT");
       return response.json({ status: nextStatus, changed: !isUnchanged });
@@ -539,8 +567,11 @@ export function createPublicBookingRouter({
       );
       await client.query(
         `UPDATE notifications
-         SET manage_token_encrypted = NULL
-         WHERE booking_id = $1 AND event_type = 'booking_received'
+         SET delivery_status = 'failed', claimed_at = NULL,
+             manage_token_encrypted = NULL,
+             last_error = 'Booking was cancelled'
+         WHERE booking_id = $1
+           AND event_type IN ('booking_received', 'booking_approved', 'new_booking_confirmed')
            AND delivery_status IN ('pending', 'sending')`,
         [booking.id],
       );
