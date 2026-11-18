@@ -371,6 +371,7 @@ export default function LiveCalendar({
           const hasCompletedEntries = dayEntries.some((entry) => entry.status === "completed");
           const isSelected = selectedDate === date;
           const isToday = today === date;
+          const isPastDate = !isAdmin && date < today;
 
           return (
             <button
@@ -378,6 +379,7 @@ export default function LiveCalendar({
                 "calendar-day",
                 isSelected ? "selected" : "",
                 isToday ? "today" : "",
+                isPastDate ? "past" : "",
                 hasActiveEntries ? "has-events" : "",
                 hasCompletedEntries && !hasActiveEntries ? "has-completed-events" : "",
                 hasCurrentData && dayEntries.length === 0 ? "available" : "",
@@ -385,6 +387,7 @@ export default function LiveCalendar({
               key={date}
               type="button"
               onClick={() => selectDate(date)}
+              disabled={isPastDate}
               aria-pressed={isSelected}
               aria-label={`${date}${dayEntries.length
                 ? `, ${isAdmin

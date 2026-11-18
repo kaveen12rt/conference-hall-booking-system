@@ -6,7 +6,6 @@ import { SitePreferences, usePreferences } from "../context/PreferencesContext.j
 const initialForm = {
   hallId: "",
   meetingTitle: "",
-  purpose: "",
   bookingDate: "",
   startTime: "",
   endTime: "",
@@ -58,6 +57,48 @@ function isQuarterHour(time) {
   return /^\d{2}:(?:00|15|30|45)$/.test(time);
 }
 
+function sriLankaBookingInstant(date, time) {
+  return Date.parse(`${date}T${time}:00+05:30`);
+}
+
+function getSriLankaDateTime(date = new Date()) {
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Colombo",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23",
+    })
+      .formatToParts(date)
+      .filter((part) => part.type !== "literal")
+      .map(({ type, value }) => [type, value]),
+  );
+  return {
+    date: `${parts.year}-${parts.month}-${parts.day}`,
+    time: `${parts.hour}:${parts.minute}`,
+  };
+}
+
+function nextQuarterHour(time) {
+  if (!time) return "00:00";
+  const [hours, minutes] = time.split(":").map(Number);
+  const totalMinutes = Math.ceil((hours * 60 + minutes + 1) / 15) * 15;
+  if (totalMinutes > 23 * 60 + 45) return "24:00";
+  return `${String(Math.floor(totalMinutes / 60)).padStart(2, "0")}:${String(
+    totalMinutes % 60,
+  ).padStart(2, "0")}`;
+}
+
+const QUARTER_HOUR_TIMES = Array.from({ length: 96 }, (_, index) => {
+  const minutes = index * 15;
+  return `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(
+    minutes % 60,
+  ).padStart(2, "0")}`;
+});
+
 function Field({ label, name, value, onChange, required = false, ...props }) {
   const id = `booking-${name}`;
   const { multiline, className = "", ...inputProps } = props;
@@ -91,12 +132,13 @@ function Field({ label, name, value, onChange, required = false, ...props }) {
 }
 
 export default function BookingPage() {
-  const { t } = usePreferences();
+  const { language, t } = usePreferences();
   const initialManageToken = new URLSearchParams(window.location.hash.slice(1)).get("manage");
   const [halls, setHalls] = useState([]);
   const [hallsLoading, setHallsLoading] = useState(true);
   const [hallError, setHallError] = useState("");
   const [form, setForm] = useState(initialForm);
+  const selectedHall = halls.find((hall) => hall.id === form.hallId);
   const [availability, setAvailability] = useState({
     hallId: "",
     month: "",
@@ -104,6 +146,7 @@ export default function BookingPage() {
     slots: [],
   });
   const [submitting, setSubmitting] = useState(false);
+  const [currentTime, setCurrentTime] = useState(() => new Date());
   const [submitError, setSubmitError] = useState("");
   const [receipt, setReceipt] = useState("");
   const [manageToken] = useState(initialManageToken ?? "");
@@ -114,6 +157,30 @@ export default function BookingPage() {
   const [managementCanEdit, setManagementCanEdit] = useState(false);
   const [managementCanCancel, setManagementCanCancel] = useState(false);
   const [managedBookingOriginal, setManagedBookingOriginal] = useState(null);
+  const sriLankaNow = getSriLankaDateTime(currentTime);
+  const minimumStartTime = form.bookingDate === sriLankaNow.date
+    ? nextQuarterHour(sriLankaNow.time)
+    : "00:00";
+  const startTimeOptions = QUARTER_HOUR_TIMES.filter(
+    (time) => time >= minimumStartTime && time <= "23:30",
+  );
+  const minimumEndTime = form.startTime
+    ? addQuarterHour(form.startTime)
+    : minimumStartTime;
+  const endTimeOptions = QUARTER_HOUR_TIMES.filter(
+    (time) => time >= minimumEndTime && time <= "23:45",
+  );
+  const bookingDateIsPast = Boolean(form.bookingDate && form.bookingDate < sriLankaNow.date);
+  const bookingStartIsPast = Boolean(
+    form.bookingDate === sriLankaNow.date &&
+      form.startTime &&
+      form.startTime <= sriLankaNow.time,
+  );
+
+  useEffect(() => {
+    const timer = setInterval(() => setCurrentTime(new Date()), 30_000);
+    return () => clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     if (!initialManageToken) return undefined;
@@ -129,7 +196,6 @@ export default function BookingPage() {
           ...initialForm,
           hallId: booking.hallId,
           meetingTitle: booking.meetingTitle,
-          purpose: booking.purpose,
           bookingDate: booking.bookingDate,
           startTime: booking.startTime,
           endTime: booking.endTime,
@@ -177,6 +243,15 @@ export default function BookingPage() {
 
   function updateField(event) {
     const { name, value } = event.target;
+    if (name === "bookingDate") {
+      setForm((current) => ({
+        ...current,
+        bookingDate: value,
+        startTime: "",
+        endTime: "",
+      }));
+      return;
+    }
     setForm((current) => ({ ...current, [name]: value }));
   }
 
@@ -201,6 +276,7 @@ export default function BookingPage() {
     (form.startTime && !isQuarterHour(form.startTime)) ||
       (form.endTime && !isQuarterHour(form.endTime)),
   );
+  const invalidBookingDateOrTime = bookingDateIsPast || bookingStartIsPast;
   const invalidTimeRange = Boolean(
     form.startTime &&
       form.endTime &&
@@ -229,6 +305,20 @@ export default function BookingPage() {
           ),
       )
     : null;
+  const maintenanceConflict =
+    selectedHall &&
+    form.bookingDate &&
+    form.startTime &&
+    form.endTime
+      ? (selectedHall.maintenanceWindows ?? []).find((window) => {
+          const bookingStart = sriLankaBookingInstant(form.bookingDate, form.startTime);
+          const bookingEnd = sriLankaBookingInstant(form.bookingDate, form.endTime);
+          return (
+            bookingStart < Date.parse(window.endsAt) &&
+            bookingEnd > Date.parse(window.startsAt)
+          );
+        })
+      : null;
   const selectedTimeIsAvailable =
     Boolean(
       availabilityIsCurrent &&
@@ -237,7 +327,8 @@ export default function BookingPage() {
         isQuarterHour(form.startTime) &&
         isQuarterHour(form.endTime) &&
         form.endTime > form.startTime &&
-        !overlappingSlot,
+        !overlappingSlot &&
+        !maintenanceConflict,
     );
 
   async function submitBooking(event) {
@@ -406,6 +497,63 @@ export default function BookingPage() {
                 </select>
               </label>
 
+              {selectedHall && (
+                <section
+                  className="selected-hall-details full-width"
+                  aria-label={t("Selected hall details")}
+                  aria-live="polite"
+                >
+                  <div className="selected-hall-heading">
+                    <h3>{selectedHall.name}</h3>
+                    <span>{t("Capacity")}: {selectedHall.capacity}</span>
+                  </div>
+                  <p>
+                    <strong>{t("Description")}:</strong>{" "}
+                    {selectedHall.description || t("No description provided.")}
+                  </p>
+                  <div className="selected-hall-facilities">
+                    <strong>{t("Facilities")}:</strong>
+                    {selectedHall.facilities.length > 0 ? (
+                      <ul>
+                        {selectedHall.facilities.map((facility) => (
+                          <li key={facility}>{t(facility)}</li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <span>{t("No facilities listed.")}</span>
+                    )}
+                  </div>
+                  {(selectedHall.maintenanceWindows ?? []).length > 0 && (
+                    <div className="selected-hall-maintenance">
+                      <strong>{t("Scheduled maintenance")}:</strong>
+                      <ul>
+                        {selectedHall.maintenanceWindows.map((window) => (
+                          <li key={window.id}>
+                            {new Intl.DateTimeFormat(
+                              language === "si" ? "si-LK" : "en-LK",
+                              {
+                                dateStyle: "medium",
+                                timeStyle: "short",
+                                timeZone: "Asia/Colombo",
+                              },
+                            ).format(new Date(window.startsAt))}
+                            {" – "}
+                            {new Intl.DateTimeFormat(
+                              language === "si" ? "si-LK" : "en-LK",
+                              {
+                                dateStyle: "medium",
+                                timeStyle: "short",
+                                timeZone: "Asia/Colombo",
+                              },
+                            ).format(new Date(window.endsAt))}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </section>
+              )}
+
               <Field
                 label={t("Meeting title")}
                 name="meetingTitle"
@@ -434,47 +582,64 @@ export default function BookingPage() {
                 required
                 disabled={!formIsEditable}
                 type="date"
+                min={sriLankaNow.date}
               />
               <div className="field-pair">
-                <Field
-                  label={t("Start time")}
-                  name="startTime"
-                  value={form.startTime}
-                  onChange={updateStartTime}
-                  required
-                  disabled={!formIsEditable}
-                  type="time"
-                  step="900"
-                  max="23:30"
-                />
-                <Field
-                  label={t("End time")}
-                  name="endTime"
-                  value={form.endTime}
-                  onChange={updateField}
-                  required
-                  disabled={!formIsEditable}
-                  type="time"
-                  step="900"
-                  min={form.startTime ? addQuarterHour(form.startTime) : undefined}
-                  max="23:45"
-                />
+                <label className="field" htmlFor="booking-startTime">
+                  <span>{t("Start time")} <span aria-hidden="true">*</span></span>
+                  <select
+                    id="booking-startTime"
+                    name="startTime"
+                    value={form.startTime}
+                    onChange={updateStartTime}
+                    required
+                    disabled={!formIsEditable}
+                  >
+                    <option value="">{t("Select a start time")}</option>
+                    {startTimeOptions.map((time) => (
+                      <option key={time} value={time}>{time}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="field" htmlFor="booking-endTime">
+                  <span>{t("End time")} <span aria-hidden="true">*</span></span>
+                  <select
+                    id="booking-endTime"
+                    name="endTime"
+                    value={form.endTime}
+                    onChange={updateField}
+                    required
+                    disabled={!formIsEditable || !form.startTime}
+                  >
+                    <option value="">{t("Select an end time")}</option>
+                    {endTimeOptions.map((time) => (
+                      <option key={time} value={time}>{time}</option>
+                    ))}
+                  </select>
+                </label>
               </div>
               <p
                 className={[
                   "time-availability",
                   "full-width",
-                  overlappingSlot || invalidTimeIncrement || invalidTimeRange
+                  overlappingSlot || invalidTimeIncrement || invalidTimeRange ||
+                    invalidBookingDateOrTime
                     ? "unavailable"
                     : "",
                   selectedTimeIsAvailable ? "available" : "",
                 ].filter(Boolean).join(" ")}
                 aria-live="polite"
               >
-                {invalidTimeIncrement
+                {bookingDateIsPast
+                  ? t("Past dates cannot be booked. Choose today or a future date.")
+                  : bookingStartIsPast
+                    ? t("That start time has passed. Choose a future 15-minute time slot.")
+                    : invalidTimeIncrement
                   ? t("Choose start and end times in 15-minute increments, such as 09:00 or 09:15.")
                   : invalidTimeRange
                     ? t("End time must be later than start time.")
+                    : maintenanceConflict
+                      ? t("This time is unavailable because the hall is scheduled for maintenance.")
                     : overlappingSlot
                   ? t("This time overlaps a reserved slot ({start}–{end}). Choose another time.", {
                     start: overlappingSlot.startTime,
@@ -482,20 +647,8 @@ export default function BookingPage() {
                   })
                   : selectedTimeIsAvailable
                     ? t("No reservation overlaps this time. The server checks again when you submit.")
-                    : t("Times use 15-minute increments. Changing the start time moves the end forward when needed; choose a hall and date to check listed reservations.")}
+                    : t("Only 15-minute time slots are available. Past times today and past dates cannot be selected.")}
               </p>
-              <Field
-                label={t("Purpose")}
-                name="purpose"
-                value={form.purpose}
-                onChange={updateField}
-                required
-                disabled={!formIsEditable}
-                multiline
-                rows={3}
-                maxLength={2000}
-                className="full-width"
-              />
               <Field
                 label={t("Contact name")}
                 name="contactName"
@@ -579,7 +732,17 @@ export default function BookingPage() {
               )}
               <div className="form-actions full-width">
                 {formIsEditable && (
-                  <button className="primary-button" type="submit" disabled={submitting}>
+                  <button
+                    className="primary-button"
+                    type="submit"
+                    disabled={
+                      submitting ||
+                      invalidBookingDateOrTime ||
+                      invalidTimeIncrement ||
+                      invalidTimeRange ||
+                      Boolean(maintenanceConflict)
+                    }
+                  >
                     {submitting
                       ? t("Submitting…")
                       : manageToken
@@ -607,9 +770,12 @@ export default function BookingPage() {
             halls={halls}
             selectedHallId={form.hallId}
             selectedDate={form.bookingDate}
-            onDateChange={(bookingDate) =>
-              setForm((current) => ({ ...current, bookingDate }))
-            }
+            onDateChange={(bookingDate) => setForm((current) => ({
+              ...current,
+              bookingDate,
+              startTime: "",
+              endTime: "",
+            }))}
             onHallChange={(hallId) => setForm((current) => ({ ...current, hallId }))}
             onAvailabilityChange={setAvailability}
           />

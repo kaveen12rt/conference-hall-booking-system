@@ -17,7 +17,9 @@ export async function apiRequest(path, { body, ...options } = {}) {
 
   const result = await response.json();
   if (!response.ok) {
-    throw new Error(result.error?.code ?? "REQUEST_FAILED");
+    const error = new Error(result.error?.code ?? "REQUEST_FAILED");
+    error.details = result.error?.details;
+    throw error;
   }
   return result;
 }
@@ -31,11 +33,21 @@ export function getErrorMessage(error) {
     BOOKING_NOT_EDITABLE: "This booking is no longer available for editing.",
     BOOKING_NOT_CANCELLABLE: "This booking cannot be cancelled in its current state.",
     BOOKING_CANCELLATION_TOO_LATE: "An approved booking can only be changed or cancelled more than one hour before it starts.",
-    BOOKING_DATE_PASSED: "A booking in the past cannot be reopened.",
+    BOOKING_DATE_PASSED: "Past dates cannot be booked. Choose today or a future date.",
+    BOOKING_START_TIME_PASSED: "That start time has passed. Choose a future 15-minute time slot.",
     BOOKING_STATUS_CONFLICT: "This booking was already updated. Refresh the calendar before trying again.",
     BOOKING_TIME_UNAVAILABLE: "That time was just booked. Refresh the calendar and choose another time.",
     BOOKING_UPDATED_PENDING: "Your changes were submitted for approval. The booking is pending again.",
     HALL_UNAVAILABLE: "That hall is unavailable or cannot accommodate the participants.",
+    HALL_NOT_FOUND: "That conference hall could not be found. Refresh the hall list and try again.",
+    HALL_CAPACITY_CONFLICT: "Capacity cannot be reduced below the participant count of an upcoming confirmed booking.",
+    MAINTENANCE_TIME_UNAVAILABLE: "This time is unavailable because the hall is scheduled for maintenance.",
+    MAINTENANCE_BOOKING_CONFLICT: "Existing bookings overlap this maintenance period.",
+    MAINTENANCE_WINDOW_CONFLICT: "This period overlaps another scheduled maintenance window.",
+    INVALID_MAINTENANCE_WINDOW: "Choose a future maintenance period using 15-minute time increments.",
+    MAINTENANCE_WINDOW_NOT_FOUND: "That scheduled maintenance period was not found. Refresh the hall list.",
+    INVALID_HALL_STATUS: "Choose whether the hall should be active or inactive.",
+    INVALID_MAINTENANCE_STATUS: "Choose whether new bookings should be paused or resumed.",
     INVALID_HALL: "Check the hall name, capacity, description, and facilities.",
     INVALID_BOOKING: "Check the form details and try again.",
     INVALID_BOOKING_STATUS: "The requested booking status is not valid.",

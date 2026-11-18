@@ -12,7 +12,7 @@ JSON request bodies are limited to 10 KB. Database queries use bound parameters.
 
 ### `GET /api/halls`
 
-Returns active hall summaries only:
+Returns active halls that are not temporarily paused for maintenance:
 
 ```json
 {
@@ -22,7 +22,14 @@ Returns active hall summaries only:
       "name": "Main Hall",
       "description": "",
       "capacity": 100,
-      "facilities": ["projector"]
+      "facilities": ["projector"],
+      "maintenanceWindows": [
+        {
+          "id": "uuid",
+          "startsAt": "2026-12-01T04:30:00.000Z",
+          "endsAt": "2026-12-01T05:30:00.000Z"
+        }
+      ]
     }
   ]
 }
@@ -30,9 +37,11 @@ Returns active hall summaries only:
 
 ### `POST /api/bookings`
 
-Creates a booking without requiring a public account. Required fields: `hallId`, `meetingTitle`, `purpose`, `bookingDate` (`YYYY-MM-DD`), `startTime` and `endTime` (`HH:MM`), positive integer `participantCount`, `contactName`, `contactEmail`, and `contactPhone`. `contactDesignation` and `additionalRequirements` are optional. The hidden `website` honeypot must remain empty. A valid booking is confirmed immediately; administrators can cancel it later.
+Creates a booking without requiring a public account. Required fields: `hallId`, `meetingTitle`, `bookingDate` (`YYYY-MM-DD`), `startTime` and `endTime` (`HH:MM`), positive integer `participantCount`, `contactName`, `contactEmail`, and `contactPhone`. `purpose` is no longer collected and is ignored; `contactDesignation` and `additionalRequirements` are optional. The hidden `website` honeypot must remain empty. A valid booking is confirmed immediately; administrators can cancel it later.
 
-The server validates field types and bounds, date/time format and ordering, active hall and capacity. Start and end times must be on 15-minute boundaries (for example, `09:00`, `09:15`, or `09:30`), and a booking must end later on the same day. The form advances the end time if a changed start time would otherwise make the interval invalid; its latest same-day start is `23:30`. The server prevents overlapping pending/approved bookings for the same hall and date; adjacent bookings are allowed. A conflict returns `409 BOOKING_TIME_UNAVAILABLE`. Booking policy (timezone, operating hours, past dates, and lead times) remains unconfirmed and is not inferred here.
+The server validates field types and bounds, date/time format and ordering, an active hall that is not paused for maintenance, and capacity. Start and end times must be on 15-minute boundaries (for example, `09:00`, `09:15`, or `09:30`), and a booking must end later on the same day. Past dates and start times that have already passed in Asia/Colombo are rejected. The form offers only 15-minute time slots and advances the end time if a changed start time would otherwise make the interval invalid; its latest same-day start is `23:30`. The server prevents overlapping pending/approved bookings for the same hall and date; adjacent bookings are allowed. A conflict returns `409 BOOKING_TIME_UNAVAILABLE`.
+
+To accommodate shared office networks and retries, the in-memory booking submission limit is 30 successful bookings per IP per 15 minutes. Invalid or otherwise failed submissions do not count toward this limit.
 
 Success (`201`) returns a 256-bit random reference once:
 
@@ -53,7 +62,7 @@ The confirmation email also contains a separate secure management link. Its 256-
 These endpoints require the secure management token emailed to the requester. The token is a bearer credential: do not share it. The email link carries it in the URL fragment (not sent to the web server in the page request), and the web page removes it from the address bar after loading.
 
 - `POST /api/bookings/manage` — body `{ "manageToken": "..." }`; returns the booking details, including the saved requester designation, and `canEdit`/`canCancel` flags with `Cache-Control: no-store`.
-- `PATCH /api/bookings/manage` — body includes `manageToken` and the editable booking fields (`hallId`, `meetingTitle`, `purpose`, `bookingDate`, `startTime`, `endTime`, `participantCount`, and optional `additionalRequirements`). Contact identity details cannot be changed through this link. The server revalidates hall capacity and conflicts transactionally.
+- `PATCH /api/bookings/manage` — body includes `manageToken` and the editable booking fields (`hallId`, `meetingTitle`, `bookingDate`, `startTime`, `endTime`, `participantCount`, and optional `additionalRequirements`). Contact identity details cannot be changed through this link. The server revalidates hall capacity and conflicts transactionally.
 - `POST /api/bookings/manage/cancel` — body `{ "manageToken": "..." }`.
 
 Requesters can edit or cancel confirmed bookings more than one hour before the meeting starts; the cancellation cutoff uses Asia/Colombo time. Contact identity details, including designation, cannot be changed through the management link. Editing a confirmed booking keeps it confirmed, notifies the requester and authorized office inbox when configured, and reschedules its reminder. Rejected, completed, or cancelled bookings cannot be edited or cancelled again. Migration `006_auto_confirm_bookings.sql` automatically confirms all bookings that were pending when this policy was introduced and queues confirmation emails/reminders.
@@ -107,6 +116,14 @@ Admin routes require the signed `admin_session` HttpOnly cookie. Login is limite
 - `GET /api/admin/calendar/bookings?month=YYYY-MM[&hallId=<uuid>]` — returns all booking states and booking/contact details for the selected month, optionally filtered by hall. Approved bookings whose scheduled end has passed in Asia/Colombo time are returned as `completed`. Admin-only and `Cache-Control: no-store`.
 - `PATCH /api/admin/calendar/bookings/:bookingId/status` — body `{ "status": "rejected" | "cancelled" | "approved" }`. New bookings are automatically confirmed, so admin approval is not available. Legacy pending bookings can be rejected or cancelled; confirmed bookings can be cancelled; a cancelled booking can be reopened as confirmed. Reopening rejects past bookings and checks for time conflicts under the same booking lock. A successful reopen creates a fresh requester-management token, queues a requester email with the new link, notifies the authorized office inbox, schedules a reminder, and is recorded in the audit log. Cancellation prevents pending reminders from being sent.
 - `POST /api/admin/halls` — creates an active hall from `{ "name": "...", "description": "...", "capacity": 100, "facilities": ["projector"] }`. Admin session and same-origin request are required; creation is recorded in `audit_logs`.
+- `GET /api/admin/halls` — returns active and inactive halls, their maintenance-pause state, and upcoming scheduled maintenance windows for hall management. Response is `Cache-Control: no-store`.
+- `PATCH /api/admin/halls/:hallId` — updates the hall's `name`, `description`, `capacity`, and `facilities`. Admin session and same-origin request are required. A capacity reduction that would be lower than the participant count of an upcoming pending or confirmed booking returns `409 HALL_CAPACITY_CONFLICT`; successful changes are recorded in `audit_logs`.
+- `PATCH /api/admin/halls/:hallId/status` — body `{ "isActive": true | false }`. Deactivation removes the hall from new public booking choices but preserves its existing bookings and records. Changes are recorded in `audit_logs`; an inactive hall can be activated again.
+- `PATCH /api/admin/halls/:hallId/maintenance` — body `{ "bookingsPaused": true | false }`. A maintenance pause temporarily removes the hall from new public booking choices without changing whether the hall is active or altering existing bookings. Requester edits to an existing booking in the same paused hall remain allowed. Pause/resume events are recorded in `audit_logs`.
+- `POST /api/admin/halls/:hallId/maintenance-windows` — schedules a future window using Sri Lanka local datetimes `{ "startsAt": "YYYY-MM-DDTHH:mm", "endsAt": "YYYY-MM-DDTHH:mm" }`; both must use 15-minute increments. Existing pending/confirmed bookings that overlap cause `409 MAINTENANCE_BOOKING_CONFLICT` with booking details; an administrator may explicitly retry with `allowBookingConflicts: true` after reviewing the warning. Overlapping maintenance windows are rejected. Schedule changes are recorded in `audit_logs`.
+- `DELETE /api/admin/halls/:hallId/maintenance-windows/:windowId` — cancels a future scheduled maintenance window and records the action in `audit_logs`.
+
+`GET /api/halls` includes each available hall's upcoming `maintenanceWindows` (`id`, `startsAt`, `endsAt`). The public booking form displays them and blocks selections overlapping a window. The server independently checks maintenance windows when creating or editing a booking and when an administrator reopens a cancelled booking.
 
 There is no public registration endpoint and no public `users` identity table. Create an admin through the interactive local command `npm run admin:create` from the repository root or backend directory. Unknown `/api/admin/*` routes are protected and return `401` without an admin session.
 

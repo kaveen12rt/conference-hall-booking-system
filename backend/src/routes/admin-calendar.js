@@ -195,6 +195,21 @@ export function createAdminCalendarRouter({
           await client.query("ROLLBACK");
           return response.status(409).json({ error: { code: "BOOKING_TIME_UNAVAILABLE" } });
         }
+        const maintenanceConflict = await client.query(
+          `SELECT 1
+           FROM hall_maintenance_windows
+           WHERE hall_id = $1
+             AND starts_at < (($2::date + $4::time) AT TIME ZONE 'Asia/Colombo')
+             AND ends_at > (($2::date + $3::time) AT TIME ZONE 'Asia/Colombo')
+           LIMIT 1`,
+          [booking.hallId, booking.date, booking.startTime, booking.endTime],
+        );
+        if (maintenanceConflict.rowCount > 0) {
+          await client.query("ROLLBACK");
+          return response.status(409).json({
+            error: { code: "MAINTENANCE_TIME_UNAVAILABLE" },
+          });
+        }
       }
 
       const restoredManageToken = nextStatus === "approved" && booking.status === "cancelled"

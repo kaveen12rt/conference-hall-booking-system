@@ -26,11 +26,43 @@ function validDate(value) {
   return !Number.isNaN(parsed.valueOf()) && parsed.toISOString().slice(0, 10) === value;
 }
 
+function getSriLankaDateTime(date = new Date()) {
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Colombo",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23",
+    })
+      .formatToParts(date)
+      .filter((part) => part.type !== "literal")
+      .map(({ type, value }) => [type, value]),
+  );
+  return {
+    date: `${parts.year}-${parts.month}-${parts.day}`,
+    time: `${parts.hour}:${parts.minute}`,
+  };
+}
+
+function getBookingTimeError(bookingDate, startTime) {
+  const now = getSriLankaDateTime();
+  if (bookingDate < now.date) {
+    return "BOOKING_DATE_PASSED";
+  }
+  if (bookingDate === now.date && startTime <= now.time) {
+    return "BOOKING_START_TIME_PASSED";
+  }
+  return "";
+}
+
 function validateBooking(body = {}) {
   const booking = {
     hallId: body.hallId,
     meetingTitle: boundedText(body.meetingTitle, 160),
-    purpose: boundedText(body.purpose, 2000),
+    purpose: boundedText(body.purpose ?? "", 2000),
     bookingDate: body.bookingDate,
     startTime: body.startTime,
     endTime: body.endTime,
@@ -52,7 +84,7 @@ function validateBooking(body = {}) {
     (body.website !== undefined && body.website !== "") ||
     !UUID_PATTERN.test(booking.hallId ?? "") ||
     !booking.meetingTitle ||
-    !booking.purpose ||
+    booking.purpose === null ||
     !validDate(booking.bookingDate) ||
     !isQuarterHour(booking.startTime ?? "") ||
     !isQuarterHour(booking.endTime ?? "") ||
@@ -82,10 +114,11 @@ export function createPublicBookingRouter({
 }) {
   const router = express.Router();
   const bookingLimiter = rateLimit({
-    windowMs: 60 * 60 * 1000,
-    limit: 5,
+    windowMs: 15 * 60 * 1000,
+    limit: 30,
     standardHeaders: "draft-8",
     legacyHeaders: false,
+    skipFailedRequests: true,
     handler: (_request, response) => {
       response.status(429).json({ error: { code: "BOOKING_RATE_LIMIT_EXCEEDED" } });
     },
@@ -111,10 +144,19 @@ export function createPublicBookingRouter({
 
   router.get("/api/halls", async (_request, response) => {
     const result = await database.query(
-      `SELECT id, name, description, capacity, facilities
-       FROM conference_halls
-       WHERE is_active = TRUE
-       ORDER BY name`,
+      `SELECT h.id, h.name, h.description, h.capacity, h.facilities,
+              COALESCE((
+                SELECT json_agg(json_build_object(
+                  'id', mw.id,
+                  'startsAt', mw.starts_at,
+                  'endsAt', mw.ends_at
+                ) ORDER BY mw.starts_at)
+                FROM hall_maintenance_windows mw
+                WHERE mw.hall_id = h.id AND mw.ends_at > NOW()
+              ), '[]'::json) AS "maintenanceWindows"
+       FROM conference_halls h
+       WHERE h.is_active = TRUE AND h.bookings_paused = FALSE
+       ORDER BY h.name`,
     );
     response.json({ halls: result.rows });
   });
@@ -156,19 +198,13 @@ export function createPublicBookingRouter({
   });
 
   router.post("/api/bookings", bookingLimiter, async (request, response) => {
-    const booking = validateBooking(request.body);
+    const booking = validateBooking({ ...request.body, purpose: "" });
     if (!booking) {
       return response.status(400).json({ error: { code: "INVALID_BOOKING" } });
     }
-
-    const hallResult = await database.query(
-      `SELECT id, capacity FROM conference_halls WHERE id = $1 AND is_active = TRUE`,
-      [booking.hallId],
-    );
-    const hall = hallResult.rows[0];
-
-    if (!hall || booking.participantCount > hall.capacity) {
-      return response.status(400).json({ error: { code: "HALL_UNAVAILABLE" } });
+    const timeError = getBookingTimeError(booking.bookingDate, booking.startTime);
+    if (timeError) {
+      return response.status(400).json({ error: { code: timeError } });
     }
 
     const reference = randomBytes(32).toString("base64url");
@@ -179,6 +215,40 @@ export function createPublicBookingRouter({
     const client = await database.connect();
     try {
       await client.query("BEGIN");
+      const hallResult = await client.query(
+        `SELECT id, capacity
+         FROM conference_halls
+         WHERE id = $1 AND is_active = TRUE AND bookings_paused = FALSE
+         FOR SHARE`,
+        [booking.hallId],
+      );
+      const hall = hallResult.rows[0];
+      if (!hall || booking.participantCount > hall.capacity) {
+        await client.query("ROLLBACK");
+        return response.status(400).json({ error: { code: "HALL_UNAVAILABLE" } });
+      }
+
+      const maintenanceConflict = await client.query(
+        `SELECT 1
+         FROM hall_maintenance_windows
+         WHERE hall_id = $1
+           AND starts_at < (($2::date + $4::time) AT TIME ZONE 'Asia/Colombo')
+           AND ends_at > (($2::date + $3::time) AT TIME ZONE 'Asia/Colombo')
+         LIMIT 1`,
+        [
+          booking.hallId,
+          booking.bookingDate,
+          booking.startTime,
+          booking.endTime,
+        ],
+      );
+      if (maintenanceConflict.rowCount > 0) {
+        await client.query("ROLLBACK");
+        return response.status(409).json({
+          error: { code: "MAINTENANCE_TIME_UNAVAILABLE" },
+        });
+      }
+
       await client.query(
         "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
         [`${booking.hallId}:${booking.bookingDate}`],
@@ -391,6 +461,7 @@ export function createPublicBookingRouter({
 
       const booking = validateBooking({
         ...request.body,
+        purpose: current.purpose,
         contactName: current.contactName,
         contactDesignation: current.contactDesignation,
         contactEmail: current.contactEmail,
@@ -400,16 +471,44 @@ export function createPublicBookingRouter({
         await client.query("ROLLBACK");
         return response.status(400).json({ error: { code: "INVALID_BOOKING" } });
       }
+      const timeError = getBookingTimeError(booking.bookingDate, booking.startTime);
+      if (timeError) {
+        await client.query("ROLLBACK");
+        return response.status(400).json({ error: { code: timeError } });
+      }
 
       const hallResult = await client.query(
         `SELECT id, capacity FROM conference_halls
-         WHERE id = $1 AND is_active = TRUE`,
-        [booking.hallId],
+         WHERE id = $1 AND is_active = TRUE
+           AND (bookings_paused = FALSE OR id = $2)
+         FOR SHARE`,
+        [booking.hallId, current.hallId],
       );
       const hall = hallResult.rows[0];
       if (!hall || booking.participantCount > hall.capacity) {
         await client.query("ROLLBACK");
         return response.status(400).json({ error: { code: "HALL_UNAVAILABLE" } });
+      }
+
+      const maintenanceConflict = await client.query(
+        `SELECT 1
+         FROM hall_maintenance_windows
+         WHERE hall_id = $1
+           AND starts_at < (($2::date + $4::time) AT TIME ZONE 'Asia/Colombo')
+           AND ends_at > (($2::date + $3::time) AT TIME ZONE 'Asia/Colombo')
+         LIMIT 1`,
+        [
+          booking.hallId,
+          booking.bookingDate,
+          booking.startTime,
+          booking.endTime,
+        ],
+      );
+      if (maintenanceConflict.rowCount > 0) {
+        await client.query("ROLLBACK");
+        return response.status(409).json({
+          error: { code: "MAINTENANCE_TIME_UNAVAILABLE" },
+        });
       }
 
       await client.query(
