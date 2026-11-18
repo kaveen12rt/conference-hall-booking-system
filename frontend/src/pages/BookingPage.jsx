@@ -91,6 +91,7 @@ function Field({ label, name, value, onChange, required = false, ...props }) {
 
 export default function BookingPage() {
   const { t } = usePreferences();
+  const initialManageToken = new URLSearchParams(window.location.hash.slice(1)).get("manage");
   const [halls, setHalls] = useState([]);
   const [hallsLoading, setHallsLoading] = useState(true);
   const [hallError, setHallError] = useState("");
@@ -104,6 +105,55 @@ export default function BookingPage() {
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState("");
   const [receipt, setReceipt] = useState("");
+  const [manageToken] = useState(initialManageToken ?? "");
+  const [managementLoading, setManagementLoading] = useState(Boolean(initialManageToken));
+  const [managementError, setManagementError] = useState("");
+  const [managementMessage, setManagementMessage] = useState("");
+  const [bookingStatus, setBookingStatus] = useState("");
+  const [managementCanEdit, setManagementCanEdit] = useState(false);
+  const [managementCanCancel, setManagementCanCancel] = useState(false);
+  const [managedBookingOriginal, setManagedBookingOriginal] = useState(null);
+
+  useEffect(() => {
+    if (!initialManageToken) return undefined;
+    window.history.replaceState(null, "", window.location.pathname + window.location.search);
+    let active = true;
+    apiRequest("/api/bookings/manage", {
+      method: "POST",
+      body: { manageToken: initialManageToken },
+    })
+      .then(({ booking, canEdit, canCancel }) => {
+        if (!active) return;
+        setForm({
+          ...initialForm,
+          hallId: booking.hallId,
+          meetingTitle: booking.meetingTitle,
+          purpose: booking.purpose,
+          bookingDate: booking.bookingDate,
+          startTime: booking.startTime,
+          endTime: booking.endTime,
+          participantCount: String(booking.participantCount),
+          contactName: booking.contactName,
+          contactEmail: booking.contactEmail,
+          contactPhone: booking.contactPhone,
+          additionalRequirements: booking.additionalRequirements,
+        });
+        setManagedBookingOriginal(booking);
+        setBookingStatus(booking.status);
+        setManagementCanEdit(canEdit);
+        setManagementCanCancel(canCancel);
+      })
+      .catch((error) => {
+        if (active) setManagementError(getErrorMessage(error));
+      })
+      .finally(() => {
+        if (active) setManagementLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [initialManageToken]);
 
   useEffect(() => {
     let active = true;
@@ -164,7 +214,16 @@ export default function BookingPage() {
           form.startTime &&
           form.endTime &&
           form.startTime < slot.endTime &&
-          form.endTime > slot.startTime,
+          form.endTime > slot.startTime &&
+          !(
+            manageToken &&
+            managedBookingOriginal &&
+            form.hallId === managedBookingOriginal.hallId &&
+            form.bookingDate === managedBookingOriginal.bookingDate &&
+            slot.date === managedBookingOriginal.bookingDate &&
+            slot.startTime === managedBookingOriginal.startTime &&
+            slot.endTime === managedBookingOriginal.endTime
+          ),
       )
     : null;
   const selectedTimeIsAvailable =
@@ -185,21 +244,68 @@ export default function BookingPage() {
     setReceipt("");
 
     try {
-      const result = await apiRequest("/api/bookings", {
-        method: "POST",
+      const result = await apiRequest(
+        manageToken ? "/api/bookings/manage" : "/api/bookings",
+        {
+        method: manageToken ? "PATCH" : "POST",
         body: {
+          ...(manageToken ? { manageToken } : {}),
           ...form,
           participantCount: Number(form.participantCount),
         },
       });
-      setReceipt(result.emailStatus);
-      setForm(initialForm);
+      if (manageToken) {
+        setBookingStatus(result.status);
+        setManagedBookingOriginal((current) => ({
+          ...current,
+          ...form,
+          participantCount: Number(form.participantCount),
+          status: result.status,
+        }));
+        setManagementMessage(
+          !result.changed
+            ? t("No changes were made.")
+            : bookingStatus === "approved"
+              ? t("Your changes were submitted for approval. The booking is pending again.")
+              : t("Your booking request was updated."),
+        );
+        setManagementCanEdit(result.status === "pending" || result.status === "approved");
+        setManagementCanCancel(result.status === "pending" || result.status === "approved");
+      } else {
+        setReceipt(result.emailStatus);
+        setForm(initialForm);
+      }
     } catch (error) {
       setSubmitError(getErrorMessage(error));
     } finally {
       setSubmitting(false);
     }
   }
+
+  async function cancelBooking() {
+    if (!window.confirm(t("Are you sure you want to cancel this booking?"))) return;
+    setSubmitting(true);
+    setSubmitError("");
+    setManagementMessage("");
+    try {
+      await apiRequest("/api/bookings/manage/cancel", {
+        method: "POST",
+        body: { manageToken },
+      });
+      setBookingStatus("cancelled");
+      setManagementCanEdit(false);
+      setManagementCanCancel(false);
+      setManagementMessage(t("Your booking has been cancelled."));
+    } catch (error) {
+      setSubmitError(getErrorMessage(error));
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  const managementReady =
+    !initialManageToken || (!managementLoading && !managementError);
+  const formIsEditable = !manageToken || managementCanEdit;
 
   return (
     <div className="app-shell">
@@ -224,11 +330,43 @@ export default function BookingPage() {
             <div className="panel-heading">
               <div>
                 <p className="eyebrow">{t("Reservation details")}</p>
-                <h2 id="booking-heading">{t("Submit a booking request")}</h2>
-                <p>{t("Complete the required fields to send your request for review.")}</p>
+                <h2 id="booking-heading">
+                  {manageToken ? t("Manage your booking") : t("Submit a booking request")}
+                </h2>
+                <p>
+                  {manageToken
+                    ? t("Update your request or cancel it. Contact details cannot be changed here.")
+                    : t("Complete the required fields to send your request for review.")}
+                </p>
               </div>
             </div>
 
+            {managementLoading && <p role="status">{t("Loading your booking…")}</p>}
+            {managementError && (
+              <p className="notice error" role="alert">{t(managementError)}</p>
+            )}
+            {manageToken && !managementLoading && !managementError && (
+              <>
+                <p className="notice" role="status">
+                  {t("Booking status")}: {t(bookingStatus)}
+                </p>
+                {bookingStatus === "approved" && !managementCanEdit && (
+                  <p className="notice" role="note">
+                    {t("Your approved booking can only be edited or cancelled more than one hour before it starts.")}
+                  </p>
+                )}
+                {bookingStatus === "pending" && !managementCanCancel && (
+                  <p className="notice" role="note">
+                    {t("Bookings can only be cancelled more than one hour before they start.")}
+                  </p>
+                )}
+                {!["pending", "approved"].includes(bookingStatus) && (
+                  <p className="notice" role="note">
+                    {t("This booking can no longer be edited or cancelled.")}
+                  </p>
+                )}
+              </>
+            )}
             {hallsLoading && <p role="status">{t("Loading available halls…")}</p>}
             {hallError && (
               <div className="notice error" role="alert">
@@ -243,7 +381,7 @@ export default function BookingPage() {
               </p>
             )}
 
-            {!hallsLoading && halls.length > 0 && (
+            {managementReady && !hallsLoading && halls.length > 0 && (
               <form className="form-grid" onSubmit={submitBooking}>
               <label className="field full-width" htmlFor="booking-hallId">
                 <span>{t("Conference hall")} <span aria-hidden="true">*</span></span>
@@ -252,9 +390,13 @@ export default function BookingPage() {
                   name="hallId"
                   value={form.hallId}
                   onChange={updateField}
+                  disabled={!formIsEditable}
                   required
                 >
                   <option value="">{t("Select a hall")}</option>
+                  {form.hallId && !halls.some((hall) => hall.id === form.hallId) && (
+                    <option value={form.hallId}>{t("Previously selected hall")}</option>
+                  )}
                   {halls.map((hall) => (
                     <option key={hall.id} value={hall.id}>
                       {hall.name} — {t("Capacity").toLowerCase()} {hall.capacity}
@@ -269,6 +411,7 @@ export default function BookingPage() {
                 value={form.meetingTitle}
                 onChange={updateField}
                 required
+                disabled={!formIsEditable}
                 maxLength={160}
               />
               <Field
@@ -278,6 +421,7 @@ export default function BookingPage() {
                 onChange={updateField}
                 required
                 type="number"
+                disabled={!formIsEditable}
                 min="1"
                 max={halls.find((hall) => hall.id === form.hallId)?.capacity}
               />
@@ -287,6 +431,7 @@ export default function BookingPage() {
                 value={form.bookingDate}
                 onChange={updateField}
                 required
+                disabled={!formIsEditable}
                 type="date"
               />
               <div className="field-pair">
@@ -296,6 +441,7 @@ export default function BookingPage() {
                   value={form.startTime}
                   onChange={updateStartTime}
                   required
+                  disabled={!formIsEditable}
                   type="time"
                   step="900"
                   max="23:30"
@@ -306,6 +452,7 @@ export default function BookingPage() {
                   value={form.endTime}
                   onChange={updateField}
                   required
+                  disabled={!formIsEditable}
                   type="time"
                   step="900"
                   min={form.startTime ? addQuarterHour(form.startTime) : undefined}
@@ -342,6 +489,7 @@ export default function BookingPage() {
                 value={form.purpose}
                 onChange={updateField}
                 required
+                disabled={!formIsEditable}
                 multiline
                 rows={3}
                 maxLength={2000}
@@ -353,6 +501,7 @@ export default function BookingPage() {
                 value={form.contactName}
                 onChange={updateField}
                 required
+                disabled={Boolean(manageToken)}
                 maxLength={160}
               />
               <Field
@@ -361,6 +510,7 @@ export default function BookingPage() {
                 value={form.contactEmail}
                 onChange={updateField}
                 required
+                disabled={Boolean(manageToken)}
                 type="email"
                 maxLength={254}
               />
@@ -370,6 +520,7 @@ export default function BookingPage() {
                 value={form.contactPhone}
                 onChange={updateField}
                 required
+                disabled={Boolean(manageToken)}
                 type="tel"
                 minLength={6}
                 maxLength={32}
@@ -379,6 +530,7 @@ export default function BookingPage() {
                 name="additionalRequirements"
                 value={form.additionalRequirements}
                 onChange={updateField}
+                disabled={!formIsEditable}
                 multiline
                 rows={3}
                 maxLength={2000}
@@ -400,21 +552,42 @@ export default function BookingPage() {
               {submitError && (
                 <p className="notice error full-width" role="alert">{t(submitError)}</p>
               )}
+              {managementMessage && (
+                <p className="notice success full-width" role="status">
+                  {managementMessage}
+                </p>
+              )}
               {receipt && (
                 <div className="notice success full-width" role="status">
                   <strong>{t("Request submitted.")}</strong>
                   <span>{t("Your request is now visible on the public schedule. Personal details remain private.")}</span>
                   <span>
                     {receipt === "queued"
-                      ? t("A confirmation email has been queued.")
+                      ? t("A confirmation email with your secure edit and cancellation link has been queued.")
                       : t("Email delivery is not configured yet. Contact the administrator for updates.")}
                   </span>
                 </div>
               )}
               <div className="form-actions full-width">
-                <button className="primary-button" type="submit" disabled={submitting}>
-                  {submitting ? t("Submitting…") : t("Submit booking request")}
-                </button>
+                {formIsEditable && (
+                  <button className="primary-button" type="submit" disabled={submitting}>
+                    {submitting
+                      ? t("Submitting…")
+                      : manageToken
+                        ? t("Save booking changes")
+                        : t("Submit booking request")}
+                  </button>
+                )}
+                {manageToken && managementCanCancel && (
+                  <button
+                    className="cancel-button"
+                    type="button"
+                    onClick={cancelBooking}
+                    disabled={submitting}
+                  >
+                    {t("Cancel my booking")}
+                  </button>
+                )}
               </div>
               </form>
             )}

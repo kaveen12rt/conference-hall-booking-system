@@ -67,7 +67,7 @@ Browser
 - **Reporting and audit:** authorized aggregate reports and traceable administrative actions.
 - **System configuration:** explicitly approved operational settings, not secrets.
 
-The initial migration creates `admins`, `conference_halls`, `bookings`, `notifications`, and `audit_logs`; no `users` table or public account flow is present. Admin session cookies contain short-lived signed tokens; a version counter in `admins` invalidates sessions on password change. Public booking status is retrieved with a random one-time reference whose SHA-256 hash alone is stored; the status endpoint returns no contact or meeting information.
+The migrations create `admins`, `conference_halls`, `bookings`, `notifications`, and `audit_logs`; no `users` table or public account flow is present. Admin session cookies contain short-lived signed tokens; a version counter in `admins` invalidates sessions on password change. Public booking status is retrieved with a random reference whose SHA-256 hash alone is stored; the status endpoint returns no contact or meeting information. Requesters receive a separate high-entropy management token by email; only its hash is stored with the booking, while an encrypted copy is held in the receipt queue until delivery. That bearer link permits limited requester edits/cancellation without creating public accounts.
 
 The public availability API returns only occupied time ranges for pending and approved bookings for the selected hall and month. The admin calendar is protected by the admin-session middleware and returns full booking details. Both calendars poll every 30 seconds; the UI clock updates every second using `Asia/Colombo`.
 
@@ -84,7 +84,7 @@ Confirm these before implementing the affected behavior:
 1. **Identity:** whether locally managed admin accounts are acceptable or Ministry SSO is required; admin account provisioning, MFA, password policy, and session duration requirements.
 2. **Authorization:** exact admin responsibilities, separation of duties, and who may create or disable admin accounts.
 3. **Booking policy:** operating hours, time zone, minimum/maximum duration, lead time, recurring requests, buffers, and how simultaneous requests are resolved.
-4. **Approval and cancellation:** approval path, delegation, rejection reasons, cancellation rights and deadlines, and transitions to completed status.
+4. **Approval and cancellation:** the current prototype permits pending requesters to edit; requester cancellation of pending or approved bookings and editing an approved booking are restricted to more than one hour before start in Asia/Colombo time. Approved edits return to pending for reapproval. Admins may reopen a cancelled future booking as pending after a fresh conflict check. Ministry approval is still required for these prototype policy choices, rejection reasons, delegation, and completed-status transitions.
 5. **Halls and availability:** who can create or deactivate halls, maintenance blocks, and whether availability can be overridden.
 6. **Notifications:** email was selected for requester receipts/decisions and the office's new-request alerts; reminders are scheduled one hour before an approved meeting. SMTP provider, official inbox, and message policy still require Ministry configuration/approval.
 7. **Data governance:** personal data fields, retention/deletion periods, audit retention, data residency, backup policy, and access to exported reports.

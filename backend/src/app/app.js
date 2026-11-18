@@ -63,11 +63,17 @@ export function createApp({
       database,
       adminNotificationEmail,
       emailDeliveryConfigured,
+      authTokenSecret,
     }),
   );
   app.use("/api/admin", createRequireAdmin(database, authTokenSecret));
   app.use(createAdminHallsRouter({ database, frontendOrigin }));
-  app.use(createAdminCalendarRouter({ database, frontendOrigin }));
+  app.use(createAdminCalendarRouter({
+    database,
+    frontendOrigin,
+    authTokenSecret,
+    adminNotificationEmail,
+  }));
 
   app.use((_request, response) => {
     response.status(404).json({ error: { code: "NOT_FOUND" } });

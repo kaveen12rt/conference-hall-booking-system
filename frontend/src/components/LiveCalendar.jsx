@@ -251,6 +251,13 @@ export default function LiveCalendar({
   }
 
   async function updateBookingStatus(entry, status) {
+    if (
+      entry.status === "cancelled" &&
+      status === "pending" &&
+      !window.confirm(t("Reopening this booking will send it back for admin approval. Continue?"))
+    ) {
+      return;
+    }
     setActionBookingId(entry.id);
     setActionError("");
     try {
@@ -267,6 +274,10 @@ export default function LiveCalendar({
       setActionError(
         requestError.message === "BOOKING_STATUS_CONFLICT"
           ? "This booking was already updated. Refresh the calendar before trying again."
+          : requestError.message === "BOOKING_TIME_UNAVAILABLE"
+            ? "That time now conflicts with another booking. The cancelled booking was not reopened."
+            : requestError.message === "BOOKING_DATE_PASSED"
+              ? "A booking in the past cannot be reopened."
           : requestError.message === "INVALID_BOOKING_STATUS"
             ? "Invalid booking status"
             : getErrorMessage(requestError),
@@ -417,7 +428,7 @@ export default function LiveCalendar({
                     <strong>{entry.meetingTitle}</strong>
                     <span>{entry.hallName} · {entry.contactName} · {entry.contactEmail}</span>
                     <span>{entry.participantCount} participants · {entry.status}</span>
-                    {(entry.status === "pending" || entry.status === "approved") && (
+                    {(entry.status === "pending" || entry.status === "approved" || entry.status === "cancelled") && (
                       <span className="event-actions">
                         {entry.status === "pending" && (
                           <>
@@ -447,6 +458,16 @@ export default function LiveCalendar({
                             disabled={actionBookingId === entry.id}
                           >
                             {t(actionBookingId === entry.id ? "Updating booking…" : "Cancel booking")}
+                          </button>
+                        )}
+                        {entry.status === "cancelled" && (
+                          <button
+                            className="secondary-button"
+                            type="button"
+                            onClick={() => updateBookingStatus(entry, "pending")}
+                            disabled={actionBookingId === entry.id}
+                          >
+                            {t(actionBookingId === entry.id ? "Updating booking…" : "Reopen for approval")}
                           </button>
                         )}
                       </span>

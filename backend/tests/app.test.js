@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import bcrypt from "bcryptjs";
 import { createApp } from "../src/app/app.js";
+import { decryptManageToken } from "../src/notifications/manage-token.js";
 
 describe("API foundation", { concurrency: false }, () => {
   let server;
@@ -9,10 +10,15 @@ describe("API foundation", { concurrency: false }, () => {
   let databaseAvailable;
   let queries;
   let bookingReferenceHash;
+  let bookingManageTokenHash;
+  let bookingManageToken;
+  let bookingManageTokenActive;
   let bookingConflict;
   let sessionCookie;
   let hallCreationAuditRecorded;
   let bookingStatus;
+  let bookingMoreThanHourRemaining;
+  let bookingUpcoming;
   let notificationsQueued;
   const admin = {
     id: "6bcf9b37-e6f1-455a-a564-12988a670d25",
@@ -25,12 +31,16 @@ describe("API foundation", { concurrency: false }, () => {
   };
   const bookingId = "4e8fb3ea-1429-4e49-a3c1-523c207a91e8";
   const adminPassword = "correct horse battery staple";
+  const authTokenSecret = "test-secret-with-more-than-thirty-two-bytes";
 
   before(async () => {
     databaseAvailable = false;
     bookingConflict = false;
     hallCreationAuditRecorded = false;
     bookingStatus = "pending";
+    bookingMoreThanHourRemaining = true;
+    bookingUpcoming = true;
+    bookingManageTokenActive = false;
     notificationsQueued = [];
     queries = [];
     admin.password_hash = await bcrypt.hash(adminPassword, 4);
@@ -58,6 +68,28 @@ describe("API foundation", { concurrency: false }, () => {
         }
         if (sql.includes("INSERT INTO audit_logs")) {
           return { rows: [] };
+        }
+        if (sql.includes("manage_token_hash") && sql.includes("FROM bookings b")) {
+          if (!bookingManageTokenActive || params[0] !== bookingManageTokenHash) {
+            return { rows: [] };
+          }
+          return {
+            rows: [{
+              hallId: hall.id,
+              meetingTitle: "Planning meeting",
+              purpose: "Project planning",
+              bookingDate: "2026-12-01",
+              startTime: "09:00",
+              endTime: "10:00",
+              participantCount: 12,
+              contactName: "Example Contact",
+              contactEmail: "contact@example.test",
+              contactPhone: "+94112223344",
+              additionalRequirements: "",
+              status: bookingStatus,
+              moreThanHourRemaining: bookingMoreThanHourRemaining,
+            }],
+          };
         }
         if (sql.includes("FROM conference_halls WHERE id = $1")) {
           return { rows: [hall] };
@@ -95,6 +127,7 @@ describe("API foundation", { concurrency: false }, () => {
         }
         if (sql.includes("INSERT INTO bookings")) {
           bookingReferenceHash = params[1];
+          bookingManageTokenHash = params[12];
           return { rows: [] };
         }
         if (sql.includes("FROM bookings") && sql.includes("reference_hash")) {
@@ -113,19 +146,53 @@ describe("API foundation", { concurrency: false }, () => {
           if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") {
             return { rows: [] };
           }
+          if (sql.includes("manage_token_hash") && sql.includes("FROM bookings")) {
+            if (!bookingManageTokenActive || params[0] !== bookingManageTokenHash) {
+              return { rows: [] };
+            }
+            return {
+              rows: [{
+                id: bookingId,
+                hallId: hall.id,
+                meetingTitle: "Planning meeting",
+                purpose: "Project planning",
+                bookingDate: "2026-12-01",
+                startTime: "09:00",
+                endTime: "10:00",
+                participantCount: 12,
+                contactName: "Example Contact",
+                contactEmail: "contact@example.test",
+                contactPhone: "+94112223344",
+                additionalRequirements: "",
+                status: bookingStatus,
+                moreThanHourRemaining: bookingMoreThanHourRemaining,
+              }],
+            };
+          }
           if (sql.includes("FOR UPDATE") && sql.includes("FROM bookings")) {
             return {
               rows: [{
                 id: bookingId,
+                hallId: hall.id,
                 contactEmail: "contact@example.test",
                 status: bookingStatus,
                 date: "2026-12-01",
                 startTime: "09:00:00",
+                endTime: "10:00:00",
               }],
             };
           }
+          if (sql.includes("AS upcoming")) {
+            return { rows: [{ upcoming: bookingUpcoming }] };
+          }
           if (sql.includes("pg_advisory_xact_lock")) {
             return { rows: [] };
+          }
+          if (sql.includes("FROM conference_halls") && sql.includes("is_active = TRUE")) {
+            return { rows: [{ ...hall }] };
+          }
+          if (sql.includes("id <> $1") && sql.includes("start_time < $5")) {
+            return { rowCount: bookingConflict ? 1 : 0, rows: [] };
           }
           if (sql.includes("FROM bookings") && sql.includes("start_time < $4")) {
             return {
@@ -133,12 +200,29 @@ describe("API foundation", { concurrency: false }, () => {
               rows: bookingConflict ? [{ "?column?": 1 }] : [],
             };
           }
-          if (sql.includes("UPDATE bookings SET status")) {
+          if (sql.includes("SET status = 'cancelled'")) {
+            bookingStatus = "cancelled";
+            bookingManageTokenActive = false;
+            return { rows: [] };
+          }
+          if (sql.includes("UPDATE bookings") && sql.includes("SET hall_id = $2")) {
+            bookingStatus = params[9];
+            return { rows: [] };
+          }
+          if (sql.includes("UPDATE bookings") && sql.includes("SET status = $2")) {
             bookingStatus = params[1];
+            if (params[1] === "cancelled" || params[1] === "rejected") {
+              bookingManageTokenActive = false;
+            } else if (params[1] === "pending") {
+              bookingManageTokenHash = params[2];
+              bookingManageTokenActive = true;
+            }
             return { rows: [] };
           }
           if (sql.includes("INSERT INTO bookings")) {
             bookingReferenceHash = params[1];
+            bookingManageTokenHash = params[12];
+            bookingManageTokenActive = true;
             return { rows: [{ id: bookingId }] };
           }
           if (sql.includes("INSERT INTO notifications")) {
@@ -178,7 +262,7 @@ describe("API foundation", { concurrency: false }, () => {
     };
     server = createApp({
       database,
-      authTokenSecret: "test-secret-with-more-than-thirty-two-bytes",
+      authTokenSecret,
       adminNotificationEmail: "office@example.test",
     }).listen(0, "127.0.0.1");
     await new Promise((resolve) => server.once("listening", resolve));
@@ -538,6 +622,12 @@ describe("API foundation", { concurrency: false }, () => {
     assert.match(receipt.reference, /^[A-Za-z0-9_-]{43}$/);
     assert.equal(receipt.status, "pending");
     assert.notEqual(bookingReferenceHash, receipt.reference);
+    bookingManageToken = decryptManageToken(
+      notificationsQueued[0].params[2],
+      authTokenSecret,
+    );
+    assert.match(bookingManageToken, /^[A-Za-z0-9_-]{43}$/);
+    assert.equal(receipt.manageToken, undefined);
 
     const status = await fetch(`${baseUrl}/api/bookings/status`, {
       method: "POST",
@@ -559,6 +649,109 @@ describe("API foundation", { concurrency: false }, () => {
         "office@example.test",
       ],
     );
+  });
+
+  it("allows requesters to securely inspect, edit, and cancel their booking", async () => {
+    const lookup = await fetch(`${baseUrl}/api/bookings/manage`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ manageToken: bookingManageToken }),
+    });
+    assert.equal(lookup.status, 200);
+    assert.equal(lookup.headers.get("cache-control"), "no-store");
+    const managed = await lookup.json();
+    assert.equal(managed.booking.contactEmail, "contact@example.test");
+    assert.equal(managed.canEdit, true);
+    assert.equal(managed.canCancel, true);
+    assert.equal(bookingManageTokenHash, queries.at(-1).params[0]);
+
+    const invalidLink = await fetch(`${baseUrl}/api/bookings/manage`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ manageToken: "B".repeat(43) }),
+    });
+    assert.equal(invalidLink.status, 404);
+
+    notificationsQueued = [];
+    const changeBody = {
+      manageToken: bookingManageToken,
+      hallId: hall.id,
+      meetingTitle: "Updated planning meeting",
+      purpose: "Project planning",
+      bookingDate: "2026-12-01",
+      startTime: "09:00",
+      endTime: "10:00",
+      participantCount: 12,
+      additionalRequirements: "",
+    };
+    const edited = await fetch(`${baseUrl}/api/bookings/manage`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(changeBody),
+    });
+    assert.equal(edited.status, 200);
+    assert.deepEqual(await edited.json(), { status: "pending", changed: true });
+    assert.equal(bookingStatus, "pending");
+    assert.equal(notificationsQueued.length, 2);
+    assert.equal(notificationsQueued[0].params[1], "booking_updated");
+    assert.match(notificationsQueued[1].sql, /booking_change_request/);
+
+    bookingStatus = "approved";
+    const approvedEdit = await fetch(`${baseUrl}/api/bookings/manage`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ...changeBody, meetingTitle: "Another planning meeting" }),
+    });
+    assert.equal(approvedEdit.status, 200);
+    assert.deepEqual(await approvedEdit.json(), { status: "pending", changed: true });
+
+    bookingStatus = "approved";
+    bookingMoreThanHourRemaining = false;
+    const tooLateEdit = await fetch(`${baseUrl}/api/bookings/manage`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ...changeBody, meetingTitle: "Too late to edit" }),
+    });
+    assert.equal(tooLateEdit.status, 409);
+    assert.deepEqual(await tooLateEdit.json(), {
+      error: { code: "BOOKING_CANCELLATION_TOO_LATE" },
+    });
+    const tooLateCancel = await fetch(`${baseUrl}/api/bookings/manage/cancel`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ manageToken: bookingManageToken }),
+    });
+    assert.equal(tooLateCancel.status, 409);
+
+    bookingStatus = "pending";
+    bookingMoreThanHourRemaining = false;
+    const pendingTooLateCancel = await fetch(`${baseUrl}/api/bookings/manage/cancel`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ manageToken: bookingManageToken }),
+    });
+    assert.equal(pendingTooLateCancel.status, 409);
+
+    bookingMoreThanHourRemaining = true;
+    notificationsQueued = [];
+    const cancelled = await fetch(`${baseUrl}/api/bookings/manage/cancel`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ manageToken: bookingManageToken }),
+    });
+    assert.equal(cancelled.status, 200);
+    assert.deepEqual(await cancelled.json(), { status: "cancelled" });
+    assert.equal(bookingStatus, "cancelled");
+    assert.equal(notificationsQueued.length, 4);
+    assert.match(notificationsQueued[3].sql, /requester_booking_cancelled/);
+    const revokedLink = await fetch(`${baseUrl}/api/bookings/manage`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ manageToken: bookingManageToken }),
+    });
+    assert.equal(revokedLink.status, 404);
+    bookingStatus = "pending";
+    notificationsQueued = [];
   });
 
   it("allows an admin to approve or cancel a booking and queues status and reminder emails", async () => {
@@ -615,8 +808,83 @@ describe("API foundation", { concurrency: false }, () => {
       bookingId,
       status: "cancelled",
     });
-    assert.equal(notificationsQueued[0].params[1], "booking_cancelled");
-    assert.match(notificationsQueued[1].sql, /UPDATE notifications/);
+    assert.ok(
+      notificationsQueued.some(({ params }) => params[1] === "booking_cancelled"),
+    );
+    assert.match(notificationsQueued.at(-1).sql, /UPDATE notifications/);
+
+    bookingStatus = "cancelled";
+    notificationsQueued = [];
+    bookingConflict = true;
+    const conflictingReopen = await fetch(
+      `${baseUrl}/api/admin/calendar/bookings/${bookingId}/status`,
+      {
+        method: "PATCH",
+        headers: {
+          cookie,
+          origin: "http://127.0.0.1:5173",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ status: "pending" }),
+      },
+    );
+    assert.equal(conflictingReopen.status, 409);
+    assert.deepEqual(await conflictingReopen.json(), {
+      error: { code: "BOOKING_TIME_UNAVAILABLE" },
+    });
+    bookingConflict = false;
+
+    bookingUpcoming = false;
+    const pastReopen = await fetch(
+      `${baseUrl}/api/admin/calendar/bookings/${bookingId}/status`,
+      {
+        method: "PATCH",
+        headers: {
+          cookie,
+          origin: "http://127.0.0.1:5173",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ status: "pending" }),
+      },
+    );
+    assert.equal(pastReopen.status, 409);
+    assert.deepEqual(await pastReopen.json(), {
+      error: { code: "BOOKING_DATE_PASSED" },
+    });
+    bookingUpcoming = true;
+
+    const reopened = await fetch(
+      `${baseUrl}/api/admin/calendar/bookings/${bookingId}/status`,
+      {
+        method: "PATCH",
+        headers: {
+          cookie,
+          origin: "http://127.0.0.1:5173",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ status: "pending" }),
+      },
+    );
+    assert.equal(reopened.status, 200);
+    assert.deepEqual(await reopened.json(), {
+      bookingId,
+      status: "pending",
+    });
+    assert.equal(bookingStatus, "pending");
+    assert.equal(bookingManageTokenActive, true);
+    assert.equal(notificationsQueued[0].params[1], "booking_reopened");
+    assert.ok(notificationsQueued[0].params[3]);
+    assert.match(notificationsQueued[1].sql, /booking_reopened_admin/);
+    const restoredManageToken = decryptManageToken(
+      notificationsQueued[0].params[3],
+      authTokenSecret,
+    );
+    const restoredManagePage = await fetch(`${baseUrl}/api/bookings/manage`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ manageToken: restoredManageToken }),
+    });
+    assert.equal(restoredManagePage.status, 200);
   });
 
   it("rejects public booking submissions with a honeypot value", async () => {

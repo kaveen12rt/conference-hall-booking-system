@@ -74,6 +74,8 @@ The frontend is available at `http://127.0.0.1:5173`. The API listens at `http:/
 
 Email notifications are queued in PostgreSQL. Configure all `NOTIFICATION_SMTP_*` settings and `NOTIFICATION_FROM_EMAIL` in `.env` to enable delivery. Set `ADMIN_NOTIFICATION_EMAIL` to the authorized office inbox for new-booking alerts; requester confirmations, decisions, and one-hour reminders use the contact email on each booking. Without SMTP configuration, emails remain queued and the public form says delivery is not configured. Do not commit SMTP credentials.
 
+Notification emails share a bilingual HTML/plain-text government-style layout and include the existing Sri Lankan State Emblem as an inline image. Before official use, confirm the emblem and sender address are approved by the Ministry; the sender's display name does not verify or authorize the sending domain.
+
 Implemented API routes:
 
 - `GET /api/halls` — list active halls for the public form.
@@ -81,9 +83,11 @@ Implemented API routes:
 - Public booking times use 15-minute increments; overlapping requests return `409 BOOKING_TIME_UNAVAILABLE`.
 - `POST /api/bookings` — submit a validated public booking request; queues requester confirmation and, when configured, office alert emails.
 - `POST /api/bookings/status` — exchange that reference for status only; no personal booking details are returned.
+- `POST /api/bookings/manage`, `PATCH /api/bookings/manage`, and `POST /api/bookings/manage/cancel` — requester self-service using the secure token in the receipt email; pending bookings can be edited, cancellations are allowed more than one hour before start, and approved edits return to pending.
 - `POST /api/admin/auth/login`, `POST /api/admin/auth/logout`, `GET /api/admin/auth/me`, `POST /api/admin/auth/password` — admin-only account lifecycle.
 - `GET /api/admin/calendar/bookings?month=YYYY-MM[&hallId=<uuid>]` — admin-only booking calendar including status and contact details.
 - `PATCH /api/admin/calendar/bookings/:bookingId/status` — approve/reject pending bookings or cancel a pending/approved booking; queues an email to the requester and a one-hour reminder on approval.
+- The admin calendar can reopen a cancelled future booking as pending for approval, provided its time is still available.
 - `POST /api/admin/halls` — admin-only creation of a conference hall; new active halls are available on the public booking form.
 - `GET /api/health` — database readiness check.
 

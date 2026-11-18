@@ -360,6 +360,8 @@ h1 {
 
 .form-actions {
   display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
   justify-content: flex-end;
   padding-top: 2px;
 }
@@ -426,6 +428,16 @@ button:disabled {
 
 .secondary-button:hover:not(:disabled) {
   background: #f3f7fc;
+}
+
+.cancel-button {
+  border-color: #c98079;
+  background: #fff8f7;
+  color: #8d2923;
+}
+
+.cancel-button:hover:not(:disabled) {
+  background: #fff0ef;
 }
 
 .notice {

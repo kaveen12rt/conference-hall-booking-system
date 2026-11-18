@@ -44,7 +44,12 @@ if (config.emailNotifications) {
   stopEmailWorker = startEmailNotificationWorker({
     database,
     transporter,
-    from,
+    from: {
+      name: "Conference Hall Booking Service | Ministry of Digital Economy",
+      address: from,
+    },
+    tokenEncryptionSecret: config.authTokenSecret,
+    frontendOrigin: config.frontendOrigin,
   });
   if (!config.emailNotifications.adminEmail) {
     console.warn("Admin booking email alerts are disabled: set ADMIN_NOTIFICATION_EMAIL.");

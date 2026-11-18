@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import { describe, it } from "node:test";
 import { processEmailNotifications } from "../src/notifications/email-worker.js";
+import { encryptManageToken } from "../src/notifications/manage-token.js";
+
+const authTokenSecret = "test-secret-with-more-than-thirty-two-bytes";
 
 function createDatabase(notification) {
   const updates = [];
@@ -30,7 +34,7 @@ describe("email notification worker", () => {
       recipient_email: "requester@example.test",
       attempts: 1,
       bookingStatus: "pending",
-      meetingTitle: "Planning meeting",
+      meetingTitle: 'Planning <script>alert("x")</script>',
       contactName: "Example Requester",
       contactEmail: "requester@example.test",
       date: "2026-12-01",
@@ -49,8 +53,58 @@ describe("email notification worker", () => {
     assert.equal(sent.length, 1);
     assert.equal(sent[0].to, "requester@example.test");
     assert.match(sent[0].text, /Main Hall/);
+    assert.match(sent[0].subject, /^Conference Hall Booking \| /);
+    assert.match(sent[0].html, /GOVERNMENT OF SRI LANKA/);
+    assert.match(sent[0].html, /Booking details \/ වෙන්කිරීමේ විස්තර/);
+    assert.match(sent[0].html, /cid:sri-lanka-state-emblem@conference-hall-booking/);
+    assert.equal(sent[0].attachments[0].cid, "sri-lanka-state-emblem@conference-hall-booking");
+    assert.equal(sent[0].attachments[0].contentType, "image/png");
+    assert.equal(sent[0].attachments[0].contentDisposition, "inline");
+    assert.match(sent[0].html, /Planning &lt;script&gt;alert\(&quot;x&quot;\)&lt;\/script&gt;/);
+    assert.doesNotMatch(sent[0].html, /<script>/);
+    const emblem = await readFile(sent[0].attachments[0].path);
+    assert.deepEqual([...emblem.subarray(0, 8)], [
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+    ]);
     assert.equal(database.updates.at(-1).params[0], "notification-id");
     assert.match(database.updates.at(-1).sql, /delivery_status = 'sent'/);
+  });
+
+  it("adds a secure requester management link to the receipt email", async () => {
+    const manageToken = "A".repeat(43);
+    const database = createDatabase({
+      id: "notification-id",
+      event_type: "booking_received",
+      recipient_email: "requester@example.test",
+      attempts: 1,
+      manage_token_encrypted: encryptManageToken(manageToken, authTokenSecret),
+      bookingStatus: "pending",
+      meetingTitle: "Planning meeting",
+      contactName: "Example Requester",
+      contactEmail: "requester@example.test",
+      date: "2026-12-01",
+      startTime: "09:00",
+      endTime: "10:00",
+      hallName: "Main Hall",
+    });
+    const sent = [];
+    await processEmailNotifications({
+      database,
+      from: "booking@example.test",
+      tokenEncryptionSecret: authTokenSecret,
+      frontendOrigin: "https://booking.example.test",
+      transporter: { sendMail: async (message) => sent.push(message) },
+      logger: { error: assert.fail },
+    });
+
+    assert.match(sent[0].text, new RegExp(
+      `https://booking\\.example\\.test/#manage=${manageToken}`,
+    ));
+    assert.match(sent[0].html, new RegExp(
+      `href="https://booking\\.example\\.test/#manage=${manageToken}"`,
+    ));
+    assert.match(sent[0].html, /Manage booking \/ වෙන්කිරීම කළමනාකරණය/);
+    assert.match(database.updates.at(-1).sql, /manage_token_encrypted = NULL/);
   });
 
   it("retries temporary SMTP failures and records the error", async () => {
