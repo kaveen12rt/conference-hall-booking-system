@@ -227,6 +227,8 @@ export default function LiveCalendar({
 
   const calendarDays = useMemo(() => getMonthDays(month), [month]);
   const selectedEntries = entriesByDate.get(selectedDate) ?? [];
+  const hasCompletedEntries = hasCurrentData &&
+    entries.some((entry) => entry.status === "completed");
   const today = dateInProjectZone(now);
   const currentHall = halls.find((hall) => hall.id === selectedHallId);
   const weekdays = useMemo(
@@ -351,6 +353,8 @@ export default function LiveCalendar({
         {calendarDays.map((date, index) => {
           if (!date) return <span className="calendar-empty" key={`empty-${index}`} />;
           const dayEntries = entriesByDate.get(date) ?? [];
+          const hasActiveEntries = dayEntries.some((entry) => entry.status !== "completed");
+          const hasCompletedEntries = dayEntries.some((entry) => entry.status === "completed");
           const isSelected = selectedDate === date;
           const isToday = today === date;
 
@@ -360,7 +364,8 @@ export default function LiveCalendar({
                 "calendar-day",
                 isSelected ? "selected" : "",
                 isToday ? "today" : "",
-                dayEntries.length > 0 ? "has-events" : "",
+                hasActiveEntries ? "has-events" : "",
+                hasCompletedEntries && !hasActiveEntries ? "has-completed-events" : "",
                 hasCurrentData && dayEntries.length === 0 ? "available" : "",
               ].filter(Boolean).join(" ")}
               key={date}
@@ -368,7 +373,11 @@ export default function LiveCalendar({
               onClick={() => selectDate(date)}
               aria-pressed={isSelected}
               aria-label={`${date}${dayEntries.length
-                ? `, ${isAdmin ? `${dayEntries.length} ${t("Bookings").toLowerCase()}` : t("Reserved time").toLowerCase()}`
+                ? `, ${isAdmin
+                  ? `${dayEntries.length} ${t("Bookings").toLowerCase()}`
+                  : dayEntries.every((entry) => entry.status === "completed")
+                    ? `${dayEntries.length} ${t("Completed meetings").toLowerCase()}`
+                    : t("Reserved time").toLowerCase()}`
                 : hasCurrentData
                     ? `, ${t("No bookings on this date").toLowerCase()}`
                     : `, ${t("Waiting for calendar data").toLowerCase()}`}`}
@@ -392,6 +401,12 @@ export default function LiveCalendar({
         </span>
         {!isAdmin && selectedHallId && hasCurrentData && (
           <span><i className="legend-dot available-dot" />{t("No reservations listed")}</span>
+        )}
+        {hasCompletedEntries && (
+          <span>
+            <i className="legend-dot completed-dot" />
+            {t("Completed meetings")}
+          </span>
         )}
       </div>
 
@@ -421,7 +436,10 @@ export default function LiveCalendar({
         ) : (
           <ul className="event-list">
             {selectedEntries.map((entry) => (
-              <li className="event-item" key={isAdmin ? entry.id : `${entry.hallName}-${entry.startTime}-${entry.endTime}`}>
+              <li
+                className={`event-item${entry.status === "completed" ? " completed" : ""}`}
+                key={isAdmin ? entry.id : `${entry.hallName}-${entry.startTime}-${entry.endTime}`}
+              >
                 <span className="event-time">{entry.startTime}–{entry.endTime}</span>
                 {isAdmin ? (
                   <div className="event-details">
@@ -479,7 +497,9 @@ export default function LiveCalendar({
                   </div>
                 ) : (
                   <span className="event-details">
-                    {entry.hallName ?? currentHall?.name ?? t("Hall")} · {t("Reserved")}
+                    {entry.hallName ?? currentHall?.name ?? t("Hall")} · {t(
+                      entry.status === "completed" ? "Meeting ended" : "Reserved",
+                    )}
                   </span>
                 )}
               </li>

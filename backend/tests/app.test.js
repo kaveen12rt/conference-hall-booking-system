@@ -18,6 +18,7 @@ describe("API foundation", { concurrency: false }, () => {
   let sessionCookie;
   let hallCreationAuditRecorded;
   let bookingStatus;
+  let bookingConflictQuery;
   let bookingMoreThanHourRemaining;
   let bookingUpcoming;
   let notificationsQueued;
@@ -39,6 +40,7 @@ describe("API foundation", { concurrency: false }, () => {
     bookingConflict = false;
     hallCreationAuditRecorded = false;
     bookingStatus = "pending";
+    bookingConflictQuery = "";
     bookingMoreThanHourRemaining = true;
     bookingUpcoming = true;
     bookingManageTokenActive = false;
@@ -69,6 +71,28 @@ describe("API foundation", { concurrency: false }, () => {
         }
         if (sql.includes("INSERT INTO audit_logs")) {
           return { rows: [] };
+        }
+        if (sql.includes("COUNT(*) FILTER") && sql.includes("GROUP BY b.booking_date")) {
+          return {
+            rows: [
+              {
+                date: "2026-12-01",
+                totalRequests: 3,
+                completedMeetings: 2,
+                scheduledMeetings: 0,
+                pendingRequests: 1,
+                closedRequests: 0,
+              },
+              {
+                date: "2026-12-02",
+                totalRequests: 1,
+                completedMeetings: 0,
+                scheduledMeetings: 1,
+                pendingRequests: 0,
+                closedRequests: 0,
+              },
+            ],
+          };
         }
         if (sql.includes("COUNT(*) OVER()") && sql.includes("b.status = 'pending'")) {
           return {
@@ -139,6 +163,7 @@ describe("API foundation", { concurrency: false }, () => {
               startTime: "09:00",
               endTime: "10:00",
               hallName: "Main Hall",
+              status: "reserved",
             }],
           };
         }
@@ -164,6 +189,9 @@ describe("API foundation", { concurrency: false }, () => {
       },
       connect: async () => ({
         query: async (sql, params = []) => {
+          if (sql.includes("FROM bookings") && sql.includes("start_time < $")) {
+            bookingConflictQuery = sql;
+          }
           if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") {
             return { rows: [] };
           }
@@ -338,6 +366,9 @@ describe("API foundation", { concurrency: false }, () => {
     const adminCalendar = await fetch(
       `${baseUrl}/api/admin/calendar/bookings?month=2026-12`,
     );
+    const monthlyReport = await fetch(
+      `${baseUrl}/api/admin/reports/monthly?month=2026-12`,
+    );
     const adminNotifications = await fetch(`${baseUrl}/api/admin/notifications`);
     const adminHallCreate = await fetch(`${baseUrl}/api/admin/halls`, {
       method: "POST",
@@ -346,6 +377,7 @@ describe("API foundation", { concurrency: false }, () => {
     assert.equal(registration.status, 404);
     assert.equal(adminEndpoint.status, 401);
     assert.equal(adminCalendar.status, 401);
+    assert.equal(monthlyReport.status, 401);
     assert.equal(adminNotifications.status, 401);
     assert.equal(adminHallCreate.status, 401);
   });
@@ -411,6 +443,47 @@ describe("API foundation", { concurrency: false }, () => {
       }],
     });
 
+    const report = await fetch(
+      `${baseUrl}/api/admin/reports/monthly?month=2026-12`,
+      { headers: { cookie: sessionCookie } },
+    );
+    assert.equal(report.status, 200);
+    assert.equal(report.headers.get("cache-control"), "no-store");
+    assert.deepEqual(await report.json(), {
+      month: "2026-12",
+      days: [
+        {
+          date: "2026-12-01",
+          totalRequests: 3,
+          completedMeetings: 2,
+          scheduledMeetings: 0,
+          pendingRequests: 1,
+          closedRequests: 0,
+        },
+        {
+          date: "2026-12-02",
+          totalRequests: 1,
+          completedMeetings: 0,
+          scheduledMeetings: 1,
+          pendingRequests: 0,
+          closedRequests: 0,
+        },
+      ],
+    });
+    const invalidReport = await fetch(
+      `${baseUrl}/api/admin/reports/monthly?month=2026-13`,
+      { headers: { cookie: sessionCookie } },
+    );
+    assert.equal(invalidReport.status, 400);
+    assert.deepEqual(await invalidReport.json(), {
+      error: { code: "INVALID_REPORT_MONTH" },
+    });
+    const reportQuery = queries.find(({ sql }) =>
+      sql.includes("COUNT(*) FILTER") && sql.includes("GROUP BY b.booking_date"),
+    );
+    assert.deepEqual(reportQuery.params, ["2026-12-01", "2027-01-01"]);
+    assert.match(reportQuery.sql, /Asia\/Colombo/);
+
     const calendar = await fetch(
       `${baseUrl}/api/admin/calendar/bookings?month=2026-12`,
       { headers: { cookie: sessionCookie } },
@@ -420,6 +493,10 @@ describe("API foundation", { concurrency: false }, () => {
     assert.equal(calendarBody.bookings[0].contactEmail, "contact@example.test");
     assert.equal(calendarBody.bookings[0].contactDesignation, "Senior Officer");
     assert.equal(calendar.headers.get("cache-control"), "no-store");
+    const calendarQuery = [...queries].reverse().find(({ sql }) =>
+      sql.includes("FROM bookings b") && sql.includes("b.booking_date >="),
+    );
+    assert.match(calendarQuery.sql, /THEN 'completed'/);
 
     const logout = await fetch(`${baseUrl}/api/admin/auth/logout`, {
       method: "POST",
@@ -557,6 +634,7 @@ describe("API foundation", { concurrency: false }, () => {
         startTime: "09:00",
         endTime: "10:00",
         hallName: "Main Hall",
+        status: "reserved",
       }],
     });
     assert.equal(JSON.stringify(result).includes("contactEmail"), false);
@@ -566,6 +644,8 @@ describe("API foundation", { concurrency: false }, () => {
       sql.includes("status IN ('pending', 'approved')"),
     );
     assert.deepEqual(query.params, [hall.id, "2026-12"]);
+    assert.match(query.sql, /THEN 'completed'/);
+    assert.match(query.sql, /ELSE 'reserved'/);
     assert.equal(response.headers.get("cache-control"), "no-store");
   });
 
@@ -580,11 +660,13 @@ describe("API foundation", { concurrency: false }, () => {
       startTime: "09:00",
       endTime: "10:00",
       hallName: "Main Hall",
+      status: "reserved",
     }]);
     const query = [...queries].reverse().find(({ sql }) =>
       sql.includes("status IN ('pending', 'approved')"),
     );
     assert.deepEqual(query.params, [null, "2026-12"]);
+    assert.match(query.sql, /THEN 'completed'/);
   });
 
   it("rejects times that do not use 15-minute increments", async () => {
@@ -637,6 +719,8 @@ describe("API foundation", { concurrency: false }, () => {
     assert.deepEqual(await response.json(), {
       error: { code: "BOOKING_TIME_UNAVAILABLE" },
     });
+    assert.match(bookingConflictQuery, /booking_date \+ end_time/);
+    assert.match(bookingConflictQuery, /Asia\/Colombo/);
   });
 
   it("rejects malformed public calendar query parameters", async () => {

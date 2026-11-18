@@ -211,6 +211,7 @@ export default function BookingPage() {
   const overlappingSlot = availabilityIsCurrent
     ? availability.slots.find(
         (slot) =>
+          slot.status !== "completed" &&
           slot.date === form.bookingDate &&
           form.hallId &&
           form.startTime &&

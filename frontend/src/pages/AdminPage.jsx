@@ -1,7 +1,10 @@
 import { useEffect, useState } from "react";
 import LiveCalendar from "../components/LiveCalendar.jsx";
+import AdminMonthlyReport from "../components/AdminMonthlyReport.jsx";
 import { apiRequest, getErrorMessage } from "../services/api.js";
 import { SitePreferences, usePreferences } from "../context/PreferencesContext.jsx";
+
+const isReportsPage = window.location.pathname.replace(/\/+$/, "") === "/admin/reports";
 
 const EMPTY_HALL_FORM = {
   name: "",
@@ -106,7 +109,7 @@ export default function AdminPage() {
   }, [admin, t]);
 
   useEffect(() => {
-    if (!admin) return undefined;
+    if (!admin || isReportsPage) return undefined;
 
     let active = true;
     apiRequest("/api/halls")
@@ -256,7 +259,7 @@ export default function AdminPage() {
           </span>
         </a>
         <div className="header-actions">
-          {admin && (
+          {admin && !isReportsPage && (
             <div className="notification-menu">
               <button
                 className="notification-button"
@@ -335,9 +338,32 @@ export default function AdminPage() {
       <main className="content admin-content">
         <section className="intro-block">
           <p className="eyebrow">{t("Restricted access")}</p>
-          <h1>{t("Administrator")}</h1>
-          <p>{t("Administrator accounts are provisioned by an authorized operator. Public registration is not available.")}</p>
+          <h1>{isReportsPage ? t("Monthly meeting report") : t("Administrator")}</h1>
+          <p>
+            {isReportsPage
+              ? t("Review daily meeting and booking request counts for a selected month.")
+              : t("Administrator accounts are provisioned by an authorized operator. Public registration is not available.")}
+          </p>
         </section>
+
+        {admin && (
+          <nav className="admin-navigation" aria-label={t("Administrator navigation")}>
+            <a
+              className={`admin-navigation-link${!isReportsPage ? " active" : ""}`}
+              href="/admin"
+              aria-current={!isReportsPage ? "page" : undefined}
+            >
+              {t("Dashboard")}
+            </a>
+            <a
+              className={`admin-navigation-link${isReportsPage ? " active" : ""}`}
+              href="/admin/reports"
+              aria-current={isReportsPage ? "page" : undefined}
+            >
+              {t("Reports")}
+            </a>
+          </nav>
+        )}
 
         <section className="panel admin-panel" aria-labelledby="admin-heading">
           {checkingSession ? (
@@ -354,13 +380,17 @@ export default function AdminPage() {
                 </button>
               </div>
 
-              <p className="notice">
-                {emailDeliveryConfigured
-                  ? t("Review pending bookings in the calendar. Approval and decision emails are queued for requesters.")
-                  : t("Review pending bookings in the calendar. Email notifications are not configured, so requesters will not receive decision emails.")}
-              </p>
+              {isReportsPage ? (
+                <AdminMonthlyReport />
+              ) : (
+                <>
+                  <p className="notice">
+                    {emailDeliveryConfigured
+                      ? t("Review pending bookings in the calendar. Approval and decision emails are queued for requesters.")
+                      : t("Review pending bookings in the calendar. Email notifications are not configured, so requesters will not receive decision emails.")}
+                  </p>
 
-              <section className="hall-management" aria-labelledby="hall-management-heading">
+                  <section className="hall-management" aria-labelledby="hall-management-heading">
                 <div className="panel-heading">
                   <div>
                     <p className="eyebrow">{t("Facilities")}</p>
@@ -482,18 +512,18 @@ export default function AdminPage() {
                     </ul>
                   )}
                 </div>
-              </section>
+                  </section>
 
-              <LiveCalendar
-                view="admin"
-                halls={halls}
-                selectedHallId={calendarHallId}
-                onHallChange={setCalendarHallId}
-                selectedDate={calendarSelectedDate || undefined}
-                onDateChange={setCalendarSelectedDate}
-              />
+                  <LiveCalendar
+                    view="admin"
+                    halls={halls}
+                    selectedHallId={calendarHallId}
+                    onHallChange={setCalendarHallId}
+                    selectedDate={calendarSelectedDate || undefined}
+                    onDateChange={setCalendarSelectedDate}
+                  />
 
-              <form className="stacked-form password-form" onSubmit={changePassword}>
+                  <form className="stacked-form password-form" onSubmit={changePassword}>
                 <h3>{t("Change password")}</h3>
                 <label className="field" htmlFor="admin-current-password">
                   <span>{t("Current password")}</span>
@@ -523,7 +553,9 @@ export default function AdminPage() {
                 <button className="primary-button" type="submit" disabled={busy}>
                   {busy ? t("Saving…") : t("Update password")}
                 </button>
-              </form>
+                  </form>
+                </>
+              )}
             </>
           ) : (
             <form className="stacked-form admin-login-form" onSubmit={login}>

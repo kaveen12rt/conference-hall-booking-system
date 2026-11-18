@@ -12,6 +12,41 @@ export function createAdminCalendarRouter({
 }) {
   const router = express.Router();
 
+  router.get("/api/admin/reports/monthly", async (request, response) => {
+    const { month } = request.query;
+    if (typeof month !== "string" || !/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) {
+      return response.status(400).json({ error: { code: "INVALID_REPORT_MONTH" } });
+    }
+
+    const [year, monthNumber] = month.split("-").map(Number);
+    const nextMonth = new Date(Date.UTC(year, monthNumber, 1))
+      .toISOString()
+      .slice(0, 10);
+    const result = await database.query(
+      `SELECT b.booking_date::text AS date,
+              COUNT(*)::int AS "totalRequests",
+              COUNT(*) FILTER (
+                WHERE b.status = 'approved'
+                  AND (b.booking_date + b.end_time) <= (NOW() AT TIME ZONE 'Asia/Colombo')
+              )::int AS "completedMeetings",
+              COUNT(*) FILTER (
+                WHERE b.status = 'approved'
+                  AND (b.booking_date + b.end_time) > (NOW() AT TIME ZONE 'Asia/Colombo')
+              )::int AS "scheduledMeetings",
+              COUNT(*) FILTER (WHERE b.status = 'pending')::int AS "pendingRequests",
+              COUNT(*) FILTER (WHERE b.status IN ('cancelled', 'rejected'))::int AS "closedRequests"
+       FROM bookings b
+       WHERE b.booking_date >= $1::date
+         AND b.booking_date < $2::date
+       GROUP BY b.booking_date
+       ORDER BY b.booking_date`,
+      [`${month}-01`, nextMonth],
+    );
+
+    response.set("Cache-Control", "no-store");
+    return response.json({ month, days: result.rows });
+  });
+
   router.get("/api/admin/notifications", async (_request, response) => {
     const result = await database.query(
       `SELECT b.id,
@@ -70,7 +105,12 @@ export function createAdminCalendarRouter({
               b.contact_designation AS "contactDesignation",
               b.contact_email AS "contactEmail",
               b.contact_phone AS "contactPhone",
-              b.status
+              CASE
+                WHEN b.status = 'approved'
+                  AND (b.booking_date + b.end_time) <= (NOW() AT TIME ZONE 'Asia/Colombo')
+                  THEN 'completed'
+                ELSE b.status
+              END AS status
        FROM bookings b
        JOIN conference_halls h ON h.id = b.hall_id
        WHERE b.booking_date >= ($1 || '-01')::date
@@ -143,6 +183,7 @@ export function createAdminCalendarRouter({
              AND hall_id = $2
              AND booking_date = $3
              AND status IN ('pending', 'approved')
+             AND (booking_date + end_time) > (NOW() AT TIME ZONE 'Asia/Colombo')
              AND start_time < $5
              AND end_time > $4
            LIMIT 1`,

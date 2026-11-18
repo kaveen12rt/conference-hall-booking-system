@@ -70,7 +70,7 @@ Returns only status and submission time. It does not expose names, contact detai
 
 ### `GET /api/availability?month=YYYY-MM[&hallId=<uuid>]`
 
-Returns dates, start/end times, and hall names for `pending` and `approved` bookings in the requested month. `hallId` is optional; when omitted, reservations across all halls are returned:
+Returns dates, start/end times, hall names, and a public-safe status for `pending` and `approved` bookings in the requested month. An approved booking is reported as `completed` once its scheduled end passes in Asia/Colombo time; other bookings are reported as `reserved` without revealing whether they are pending or approved. Completed bookings remain visible in the calendar but no longer block a new request for that time. `hallId` is optional; when omitted, reservations across all halls are returned:
 
 ```json
 {
@@ -81,7 +81,8 @@ Returns dates, start/end times, and hall names for `pending` and `approved` book
       "date": "2026-12-01",
       "startTime": "09:00",
       "endTime": "10:00",
-      "hallName": "Main Hall"
+      "hallName": "Main Hall",
+      "status": "reserved"
     }
   ]
 }
@@ -101,8 +102,9 @@ Admin routes require the signed `admin_session` HttpOnly cookie. Login is limite
 - `POST /api/admin/auth/logout` — clears the cookie and revokes that admin's prior tokens.
 - `GET /api/admin/auth/me` — returns the authenticated admin ID/username and whether SMTP email delivery is configured.
 - `GET /api/admin/notifications` — returns the total number of pending requests and the 10 most recently submitted pending bookings for the admin dashboard notification menu. Response is `Cache-Control: no-store`.
+- `GET /api/admin/reports/monthly?month=YYYY-MM` — returns per-day counts for requests, approved/completed meetings, pending requests, and cancelled/rejected requests. Counts use each booking's current state; approved meetings are marked completed after their scheduled end in Asia/Colombo time. Response is `Cache-Control: no-store`.
 - `POST /api/admin/auth/password` — body `{ "currentPassword": "...", "newPassword": "..." }`; new passwords must be 12-72 UTF-8 bytes. Existing sessions are invalidated by incrementing the admin token version; the current session is replaced.
-- `GET /api/admin/calendar/bookings?month=YYYY-MM[&hallId=<uuid>]` — returns all booking states and booking/contact details for the selected month, optionally filtered by hall. Admin-only and `Cache-Control: no-store`.
+- `GET /api/admin/calendar/bookings?month=YYYY-MM[&hallId=<uuid>]` — returns all booking states and booking/contact details for the selected month, optionally filtered by hall. Approved bookings whose scheduled end has passed in Asia/Colombo time are returned as `completed`. Admin-only and `Cache-Control: no-store`.
 - `PATCH /api/admin/calendar/bookings/:bookingId/status` — body `{ "status": "approved" | "rejected" | "cancelled" | "pending" }`. Pending bookings can be approved, rejected, or cancelled; approved bookings can be cancelled; a cancelled booking can be reopened as pending. Reopening rejects past bookings and checks for time conflicts under the same booking lock. A successful reopen creates a fresh requester-management token, queues a requester email with the new link, notifies the authorized office inbox, and is recorded in the audit log. Approval queues a reminder; cancellation prevents pending reminders from being sent.
 - `POST /api/admin/halls` — creates an active hall from `{ "name": "...", "description": "...", "capacity": 100, "facilities": ["projector"] }`. Admin session and same-origin request are required; creation is recorded in `audit_logs`.
 

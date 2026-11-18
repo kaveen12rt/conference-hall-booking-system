@@ -134,7 +134,13 @@ export function createPublicBookingRouter({
       `SELECT b.booking_date::text AS date,
               TO_CHAR(b.start_time, 'HH24:MI') AS "startTime",
               TO_CHAR(b.end_time, 'HH24:MI') AS "endTime",
-              h.name AS "hallName"
+              h.name AS "hallName",
+              CASE
+                WHEN b.status = 'approved'
+                  AND (b.booking_date + b.end_time) <= (NOW() AT TIME ZONE 'Asia/Colombo')
+                  THEN 'completed'
+                ELSE 'reserved'
+              END AS status
        FROM bookings b
        JOIN conference_halls h ON h.id = b.hall_id
        WHERE ($1::uuid IS NULL OR b.hall_id = $1)
@@ -183,6 +189,7 @@ export function createPublicBookingRouter({
          WHERE hall_id = $1
            AND booking_date = $2
            AND status IN ('pending', 'approved')
+           AND (booking_date + end_time) > (NOW() AT TIME ZONE 'Asia/Colombo')
            AND start_time < $4
            AND end_time > $3
          LIMIT 1`,
@@ -401,6 +408,7 @@ export function createPublicBookingRouter({
            AND hall_id = $2
            AND booking_date = $3
            AND status IN ('pending', 'approved')
+           AND (booking_date + end_time) > (NOW() AT TIME ZONE 'Asia/Colombo')
            AND start_time < $5
            AND end_time > $4
          LIMIT 1`,
