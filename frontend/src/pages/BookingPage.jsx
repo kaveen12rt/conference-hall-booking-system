@@ -236,8 +236,11 @@ export default function BookingPage() {
         setHallsLoading(false);
       } catch (error) {
         if (!active) return;
-        if (error.message === "BACKEND_STARTING" && attempt < 5) {
-          timer = setTimeout(() => loadHalls(attempt + 1), 1500);
+        if (
+          (error.message === "BACKEND_STARTING" || error.message === "REQUEST_FAILED") &&
+          attempt < 20
+        ) {
+          timer = setTimeout(() => loadHalls(attempt + 1), 2000);
           return;
         }
         setHallError(getErrorMessage(error));

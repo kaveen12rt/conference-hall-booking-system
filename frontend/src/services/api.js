@@ -15,10 +15,20 @@ export async function apiRequest(path, { body, ...options } = {}) {
     return null;
   }
 
-  const result = await response.json();
+  let result = null;
+  try {
+    result = await response.json();
+  } catch {
+    result = null;
+  }
   if (!response.ok) {
-    const error = new Error(result.error?.code ?? "REQUEST_FAILED");
-    error.details = result.error?.details;
+    const code =
+      result?.error?.code ??
+      (response.status === 502 || response.status === 503
+        ? "BACKEND_STARTING"
+        : "REQUEST_FAILED");
+    const error = new Error(code);
+    error.details = result?.error?.details;
     throw error;
   }
   return result;

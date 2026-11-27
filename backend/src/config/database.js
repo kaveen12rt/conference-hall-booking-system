@@ -147,6 +147,8 @@ export function createDatabasePool(dbConfig, { multipleStatements = false } = {}
     waitForConnections: true,
     connectionLimit: 10,
     connectTimeout: 25_000,
+    enableKeepAlive: true,
+    keepAliveInitialDelay: 10_000,
     timezone: "Z",
     dateStrings: ["DATE", "TIME"],
     multipleStatements,
